@@ -1,3 +1,96 @@
+from django.core.validators import RegexValidator
 from django.db import models
 
-# Create your models here.
+
+class AgentCompany(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Importer(models.Model):
+    agent_company = models.ForeignKey(AgentCompany, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    access_code = models.CharField(
+        max_length=6,
+        validators=[RegexValidator(r'^\d{6}$', 'Access code must be 6 digits.')],
+    )
+    access_active = models.BooleanField(default=True)
+    access_expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = [('agent_company', 'name')]
+
+    def __str__(self):
+        return f'{self.name} ({self.agent_company})'
+
+
+class Shipment(models.Model):
+    importer = models.ForeignKey(Importer, on_delete=models.CASCADE)
+    bl_number = models.CharField(max_length=100, db_index=True)
+    shipping_line = models.CharField(max_length=200)
+    port = models.CharField(max_length=200)
+    destination_area = models.CharField(max_length=200)
+    discharge_date = models.DateField(null=True, blank=True)
+    free_days = models.PositiveIntegerField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.bl_number
+
+
+class Container(models.Model):
+    class WaitingOn(models.TextChoices):
+        CUSTOMS = 'customs', 'Customs'
+        TERMINAL = 'terminal', 'Terminal'
+        SHIPPING_LINE = 'shipping_line', 'Shipping line'
+        IMPORTER = 'importer', 'Importer'
+        AGENT = 'agent', 'Agent'
+        NOBODY = 'nobody', 'Nobody'
+
+    shipment = models.ForeignKey(
+        Shipment, on_delete=models.CASCADE, related_name='containers'
+    )
+    number = models.CharField(max_length=50, db_index=True)
+    size = models.CharField(max_length=10)
+    waiting_on = models.CharField(
+        max_length=20, choices=WaitingOn.choices, default=WaitingOn.NOBODY
+    )
+    waiting_on_since = models.DateTimeField(null=True, blank=True)
+    waiting_on_note = models.TextField(blank=True, default='')
+
+    class Meta:
+        unique_together = [('shipment', 'number')]
+
+    def __str__(self):
+        return self.number
+
+
+class Stage(models.Model):
+    order = models.PositiveIntegerField(unique=True)
+    key = models.SlugField(max_length=100, unique=True)
+    label = models.CharField(max_length=200)
+    is_optional = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return self.label
+
+
+class StageEvent(models.Model):
+    container = models.ForeignKey(Container, on_delete=models.CASCADE)
+    stage = models.ForeignKey(Stage, on_delete=models.PROTECT)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    skipped = models.BooleanField(default=False)
+    note = models.TextField(blank=True, default='')
+
+    class Meta:
+        unique_together = [('container', 'stage')]
+
+    def __str__(self):
+        state = 'skipped' if self.skipped else 'done'
+        return f'{self.container} - {self.stage} ({state})'
