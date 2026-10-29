@@ -1,0 +1,34 @@
+{% extends "tracking/base.html" %}
+
+{% block title %}Track your container{% endblock %}
+
+{% block content %}
+<header class="topbar">
+<a class="login-link" href="{% url 'agent_login' %}">Agent login</a>
+</header>
+<main class="wrap">
+<div class="card">
+<h1>Track your container</h1>
+<form method="post" action="{% url 'track' %}">
+{% csrf_token %}
+<label for="id-q">Container or BL number</label>
+<input id="id-q" type="text" name="q" value="{{ query }}" autocomplete="off" required>
+<button type="submit">Track</button>
+</form>
+<p class="help">You will need the access code from your clearing agent to see results.</p>
+{% if show_dialog %}
+<section class="dialog">
+<h2>Enter access code</h2>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="{% url 'verify' %}">
+{% csrf_token %}
+<input type="hidden" name="q" value="{{ query }}">
+<label for="id-code">Access code</label>
+<input id="id-code" type="text" name="code" inputmode="numeric" autocomplete="off" required>
+<button type="submit">Verify</button>
+</form>
+</section>
+{% endif %}
+</div>
+</main>
+{% endblock %}

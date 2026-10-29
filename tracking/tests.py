@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from . import access as access_helpers
+from .views import LOCKED_MESSAGE, WRONG_DETAILS_MESSAGE
 from .models import (
     AccessAttempt,
     AgentCompany,
@@ -122,3 +123,110 @@ class AccessTests(TestCase):
         )
         self.assertIn(expected_hash, stored)
         self.assertNotIn(raw_token, stored)
+
+
+class ImporterFlowTests(TestCase):
+    def setUp(self):
+        self.company_a = AgentCompany.objects.create(name='Harbour Light Ltd')
+        self.importer_a = Importer.objects.create(
+            agent_company=self.company_a,
+            name='Harbour Foods',
+            access_code='482910',
+        )
+        self.shipment_a = Shipment.objects.create(
+            importer=self.importer_a,
+            bl_number='FLOWBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        self.container_a = Container.objects.create(
+            shipment=self.shipment_a, number='TCLU1000010', size='40ft'
+        )
+        self.company_b = AgentCompany.objects.create(name='Riverside Brands Ltd')
+        self.importer_b = Importer.objects.create(
+            agent_company=self.company_b,
+            name='Riverside Goods',
+            access_code='730119',
+        )
+        self.shipment_b = Shipment.objects.create(
+            importer=self.importer_b,
+            bl_number='FLOWBL002',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        self.container_b = Container.objects.create(
+            shipment=self.shipment_b, number='TCLU2000020', size='20ft'
+        )
+
+    def _private_names(self):
+        return [
+            'Harbour Light Ltd',
+            'Harbour Foods',
+            'Riverside Brands Ltd',
+            'Riverside Goods',
+        ]
+
+    def test_same_message_for_all_failures(self):
+        responses = [
+            self.client.post(
+                '/track/verify/', {'q': 'TCLU1000010', 'code': '000000'}
+            ),
+            self.client.post(
+                '/track/verify/', {'q': 'NOPE9999999', 'code': '482910'}
+            ),
+            self.client.post(
+                '/track/verify/', {'q': 'TCLU2000020', 'code': '482910'}
+            ),
+        ]
+        for response in responses:
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, WRONG_DETAILS_MESSAGE)
+            for name in self._private_names():
+                self.assertNotContains(response, name)
+
+    def test_lockout_after_five_failures(self):
+        for _ in range(5):
+            self.client.post(
+                '/track/verify/', {'q': 'LOCKC000001', 'code': '000000'}
+            )
+        response = self.client.post(
+            '/track/verify/', {'q': 'LOCKC000001', 'code': '000000'}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, LOCKED_MESSAGE)
+
+    def test_correct_code_sets_cookie_and_redirects(self):
+        response = self.client.post(
+            '/track/verify/', {'q': 'TCLU1000010', 'code': '482910'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/s/TCLU1000010/')
+        self.assertIn('device_token', response.cookies)
+
+    def test_second_search_goes_straight_to_timeline(self):
+        self.client.post('/track/verify/', {'q': 'TCLU1000010', 'code': '482910'})
+        response = self.client.post('/track/', {'q': 'TCLU1000010'})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/s/TCLU1000010/')
+
+    def test_timeline_without_access_redirects(self):
+        response = self.client.get('/s/TCLU1000010/')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/')
+
+    def test_no_private_names_in_html(self):
+        pages = [self.client.get('/')]
+        pages.append(self.client.post('/track/', {'q': 'TCLU1000010'}))
+        verify = self.client.post(
+            '/track/verify/', {'q': 'FLOWBL001', 'code': '482910'}
+        )
+        self.assertEqual(verify.status_code, 302)
+        timeline = self.client.get(verify['Location'])
+        pages.append(timeline)
+        self.assertContains(timeline, 'TCLU1000010')
+        for page in pages:
+            self.assertEqual(page.status_code, 200)
+            for name in self._private_names():
+                self.assertNotContains(page, name)
