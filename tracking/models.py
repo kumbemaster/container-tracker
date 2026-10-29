@@ -1,5 +1,6 @@
 from django.core.validators import RegexValidator
 from django.db import models
+from django.utils import timezone
 
 
 class AgentCompany(models.Model):
@@ -96,3 +97,34 @@ class StageEvent(models.Model):
     def __str__(self):
         state = 'skipped' if self.skipped else 'done'
         return f'{self.container} - {self.stage} ({state})'
+
+
+class DeviceSession(models.Model):
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f'Session {self.pk}'
+
+
+class DeviceGrant(models.Model):
+    session = models.ForeignKey(DeviceSession, on_delete=models.CASCADE)
+    importer = models.ForeignKey(Importer, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = [('session', 'importer')]
+
+    def __str__(self):
+        state = 'revoked' if self.revoked else 'active'
+        return f'{self.session} -> {self.importer} ({state})'
+
+
+class AccessAttempt(models.Model):
+    key = models.CharField(max_length=200, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f'{self.key} at {self.created_at}'
