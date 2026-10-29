@@ -28,8 +28,14 @@ class Command(BaseCommand):
                 'port': 'Onne',
                 'destination_area': 'Port Harcourt',
                 'discharge_date': (now - timedelta(days=4)).date(),
-                'free_days': 7,
+                'shipping_line_free_days': 5,
+                'terminal_free_days': 3,
             },
+        )
+        shipment.shipping_line_free_days = 5
+        shipment.terminal_free_days = 3
+        shipment.save(
+            update_fields=['shipping_line_free_days', 'terminal_free_days']
         )
 
         container1, _ = Container.objects.get_or_create(

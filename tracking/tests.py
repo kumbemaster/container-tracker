@@ -1,10 +1,11 @@
 import hashlib
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 from django.test import TestCase
 from django.utils import timezone
 
 from . import access as access_helpers
+from . import clocks as clock_helpers
 from .views import LOCKED_MESSAGE, WRONG_DETAILS_MESSAGE
 from .models import (
     AccessAttempt,
@@ -14,6 +15,8 @@ from .models import (
     DeviceSession,
     Importer,
     Shipment,
+    Stage,
+    StageEvent,
 )
 from .validators import is_valid_container_number
 
@@ -230,3 +233,210 @@ class ImporterFlowTests(TestCase):
             self.assertEqual(page.status_code, 200)
             for name in self._private_names():
                 self.assertNotContains(page, name)
+
+
+class ClockTests(TestCase):
+    def _make_container(self, number, discharge_date, terminal_days, shipping_days):
+        company = AgentCompany.objects.create(name='Clock Co %s' % number)
+        importer = Importer.objects.create(
+            agent_company=company,
+            name='Clock Importer %s' % number,
+            access_code='111111',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='CLOCKBL%s' % number,
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+            discharge_date=discharge_date,
+            terminal_free_days=terminal_days,
+            shipping_line_free_days=shipping_days,
+        )
+        return Container.objects.create(
+            shipment=shipment, number=number, size='40ft'
+        )
+
+    def _add_event(self, container, key, day):
+        stage = Stage.objects.get(key=key)
+        occurred = timezone.make_aware(
+            datetime(day.year, day.month, day.day, 12, 0)
+        )
+        return StageEvent.objects.create(
+            container=container, stage=stage, occurred_at=occurred
+        )
+
+    def test_sunday_discharge_end_dates(self):
+        sunday = date(2026, 10, 25)
+        self.assertEqual(sunday.weekday(), 6)
+        container = self._make_container('SUN0000001', sunday, 3, 5)
+        wednesday = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 26)
+        )
+        self.assertEqual(wednesday['end_date'], date(2026, 10, 28))
+        friday = clock_helpers.port_clock(
+            container, 'Shipping line free time', 5, today=date(2026, 10, 26)
+        )
+        self.assertEqual(friday['end_date'], date(2026, 10, 30))
+        self.assertEqual(date(2026, 10, 30).weekday(), 4)
+
+    def test_weekends_count(self):
+        thursday = date(2026, 10, 22)
+        self.assertEqual(thursday.weekday(), 3)
+        container = self._make_container('THU0000001', thursday, 3, 3)
+        clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=thursday
+        )
+        self.assertEqual(clock['end_date'], date(2026, 10, 25))
+        self.assertEqual(clock['end_date'].weekday(), 6)
+
+    def test_stopped_within_free_time(self):
+        container = self._make_container(
+            'STP0000001', date(2026, 10, 25), 3, 3
+        )
+        self._add_event(container, 'gate_out', date(2026, 10, 27))
+        clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 29)
+        )
+        self.assertEqual(clock['state'], 'stopped')
+        self.assertEqual(clock['stopped_date'], date(2026, 10, 27))
+        self.assertTrue(clock['within_free_time'])
+
+    def test_stopped_after_free_time(self):
+        container = self._make_container(
+            'STP0000002', date(2026, 10, 25), 3, 3
+        )
+        self._add_event(container, 'gate_out', date(2026, 10, 30))
+        clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 31)
+        )
+        self.assertEqual(clock['state'], 'stopped')
+        self.assertFalse(clock['within_free_time'])
+
+    def test_last_free_day(self):
+        container = self._make_container(
+            'LST0000001', date(2026, 10, 25), 3, 3
+        )
+        clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 28)
+        )
+        self.assertEqual(clock['days_left'], 0)
+        self.assertTrue(clock['last_free_day'])
+        self.assertEqual(clock['state'], 'amber')
+
+    def test_ok_amber_and_red(self):
+        container = self._make_container(
+            'LEV0000001', date(2026, 10, 25), 3, 3
+        )
+        ok_clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 25)
+        )
+        self.assertEqual(ok_clock['state'], 'ok')
+        self.assertEqual(ok_clock['days_left'], 3)
+        amber_clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 26)
+        )
+        self.assertEqual(amber_clock['state'], 'amber')
+        self.assertEqual(amber_clock['days_left'], 2)
+        self.assertFalse(amber_clock['last_free_day'])
+        red_clock = clock_helpers.port_clock(
+            container, 'Terminal free time', 3, today=date(2026, 10, 29)
+        )
+        self.assertEqual(red_clock['state'], 'red')
+        self.assertEqual(red_clock['days_left'], -1)
+
+    def test_return_clock_needs_delivered(self):
+        container = self._make_container(
+            'RET0000001', date(2026, 10, 25), 3, 3
+        )
+        self.assertIsNone(clock_helpers.return_clock(container))
+
+    def test_return_clock_amber_red_and_stopped(self):
+        container = self._make_container(
+            'RET0000002', date(2026, 10, 25), 3, 3
+        )
+        self._add_event(container, 'delivered', date(2026, 10, 27))
+        amber = clock_helpers.return_clock(container, today=date(2026, 11, 8))
+        self.assertEqual(amber['end_date'], date(2026, 11, 10))
+        self.assertEqual(amber['state'], 'amber')
+        self.assertEqual(amber['days_left'], 2)
+        red = clock_helpers.return_clock(container, today=date(2026, 11, 11))
+        self.assertEqual(red['state'], 'red')
+        self.assertEqual(red['days_left'], -1)
+        self._add_event(container, 'empty_container_returned', date(2026, 11, 9))
+        stopped = clock_helpers.return_clock(container, today=date(2026, 11, 12))
+        self.assertEqual(stopped['state'], 'stopped')
+        self.assertEqual(stopped['stopped_date'], date(2026, 11, 9))
+        self.assertTrue(stopped['within_window'])
+
+    def test_return_clock_stopped_after_window(self):
+        container = self._make_container(
+            'RET0000003', date(2026, 10, 25), 3, 3
+        )
+        self._add_event(container, 'delivered', date(2026, 10, 27))
+        self._add_event(
+            container, 'empty_container_returned', date(2026, 11, 12)
+        )
+        stopped = clock_helpers.return_clock(container, today=date(2026, 11, 13))
+        self.assertEqual(stopped['state'], 'stopped')
+        self.assertFalse(stopped['within_window'])
+
+    def test_missing_fields_give_none(self):
+        container = self._make_container('MIS0000001', None, 3, 5)
+        self.assertIsNone(
+            clock_helpers.port_clock(container, 'Terminal free time', 3)
+        )
+        container.shipment.discharge_date = date(2026, 10, 25)
+        container.shipment.save()
+        self.assertIsNone(
+            clock_helpers.port_clock(container, 'Terminal free time', None)
+        )
+        clocks = clock_helpers.build_clocks(container, today=date(2026, 10, 26))
+        self.assertEqual(
+            [clock['label'] if clock else None for clock in clocks],
+            ['Terminal free time', 'Shipping line free time', None],
+        )
+
+    def test_build_clocks_order(self):
+        container = self._make_container(
+            'BLD0000001', date(2026, 10, 25), 3, 5
+        )
+        clocks = clock_helpers.build_clocks(container, today=date(2026, 10, 26))
+        self.assertEqual(
+            [clock['label'] for clock in clocks[:2]],
+            ['Terminal free time', 'Shipping line free time'],
+        )
+        self.assertEqual(clocks[0]['end_date'], date(2026, 10, 28))
+        self.assertEqual(clocks[1]['end_date'], date(2026, 10, 30))
+        self.assertIsNone(clocks[2])
+
+
+class TimelineClockViewTests(TestCase):
+    def test_timeline_shows_both_free_time_labels(self):
+        company = AgentCompany.objects.create(name='Timeline Clock Co')
+        importer = Importer.objects.create(
+            agent_company=company,
+            name='Timeline Clock Importer',
+            access_code='222222',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='TIMECLOCKBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+            discharge_date=date(2026, 10, 25),
+            terminal_free_days=3,
+            shipping_line_free_days=5,
+        )
+        Container.objects.create(
+            shipment=shipment, number='TIMECLOCK01', size='40ft'
+        )
+        verify = self.client.post(
+            '/track/verify/', {'q': 'TIMECLOCK01', 'code': '222222'}
+        )
+        self.assertEqual(verify.status_code, 302)
+        timeline = self.client.get(verify['Location'])
+        self.assertEqual(timeline.status_code, 200)
+        self.assertContains(timeline, 'Terminal free time')
+        self.assertContains(timeline, 'Shipping line free time')

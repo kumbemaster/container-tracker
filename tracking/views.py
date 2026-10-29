@@ -3,6 +3,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
 from . import access as access_helpers
+from .clocks import build_clocks
 from .models import Container
 
 COOKIE_NAME = 'device_token'
@@ -125,12 +126,21 @@ def timeline(request, ref):
     if session is None or not access_helpers.has_access(session, _owner_of(target)):
         return _private(redirect('/'))
     if isinstance(target, Container):
-        context = {'container_number': target.number, 'container_numbers': None}
+        context = {
+            'container_number': target.number,
+            'clocks': build_clocks(target),
+            'entries': None,
+        }
     else:
-        numbers = list(
-            target.containers.order_by('number').values_list('number', flat=True)
-        )
-        context = {'container_number': None, 'container_numbers': numbers}
+        entries = [
+            {'number': container.number, 'clocks': build_clocks(container)}
+            for container in target.containers.order_by('number')
+        ]
+        context = {
+            'container_number': None,
+            'clocks': None,
+            'entries': entries,
+        }
     return _private(render(request, 'tracking/timeline.html', context))
 
 

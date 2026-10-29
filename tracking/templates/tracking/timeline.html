@@ -9,11 +9,18 @@
 <p>Full timeline coming soon.</p>
 {% if container_number %}
 <p>Container: {{ container_number }}</p>
+{% for clock in clocks %}
+{% include "tracking/_clock.html" with clock=clock %}
+{% endfor %}
 {% endif %}
-{% if container_numbers %}
+{% if entries %}
 <ul>
-{% for number in container_numbers %}
-<li>{{ number }}</li>
+{% for entry in entries %}
+<li>{{ entry.number }}
+{% for clock in entry.clocks %}
+{% include "tracking/_clock.html" with clock=clock %}
+{% endfor %}
+</li>
 {% endfor %}
 </ul>
 {% endif %}

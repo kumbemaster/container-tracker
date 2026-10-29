@@ -34,7 +34,9 @@ class Shipment(models.Model):
     port = models.CharField(max_length=200)
     destination_area = models.CharField(max_length=200)
     discharge_date = models.DateField(null=True, blank=True)
-    free_days = models.PositiveIntegerField(null=True, blank=True)
+    shipping_line_free_days = models.PositiveIntegerField(null=True, blank=True)
+    terminal_free_days = models.PositiveIntegerField(null=True, blank=True)
+    return_window_days = models.PositiveIntegerField(default=14)
     closed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

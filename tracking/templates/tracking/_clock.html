@@ -1,0 +1,23 @@
+{% if clock %}
+<p class="clock clock-{{ clock.state }}">
+{% if clock.state == 'stopped' %}
+{% if clock.within_free_time or clock.within_window %}<span aria-hidden="true">✓</span>{% else %}<span aria-hidden="true">⚠</span>{% endif %}
+{% elif clock.state == 'red' %}<span aria-hidden="true">✕</span>
+{% elif clock.state == 'amber' %}<span aria-hidden="true">⚠</span>
+{% else %}<span aria-hidden="true">✓</span>{% endif %}
+<strong>{{ clock.label }}:</strong>
+{% if clock.state == 'stopped' %}
+{% if clock.kind == 'return' %}Empty container returned on {{ clock.stopped_date|date:"j M" }}, {% if clock.within_window %}within return window{% else %}after return window ended{% endif %}
+{% else %}Stopped at gate out on {{ clock.stopped_date|date:"j M" }}, {% if clock.within_free_time %}within free time{% else %}after free time ended{% endif %}
+{% endif %}
+{% elif clock.kind == 'return' %}
+{% if clock.last_free_day %}Last day to return the empty container: today
+{% elif clock.state == 'red' %}Empty container return overdue (was due {{ clock.end_date|date:"j M" }})
+{% else %}Return the empty container by {{ clock.end_date|date:"j M" }} ({{ clock.days_left }} day{{ clock.days_left|pluralize }} left)
+{% endif %}
+{% elif clock.last_free_day %}Last free day today
+{% elif clock.state == 'red' %}Free time ended {{ clock.end_date|date:"D d M" }}
+{% else %}Free time ends {{ clock.end_date|date:"D d M" }} ({{ clock.days_left }} day{{ clock.days_left|pluralize }} left)
+{% endif %}
+</p>
+{% endif %}

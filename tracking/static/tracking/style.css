@@ -100,6 +100,26 @@ ul {
   padding-left: 1.25rem;
 }
 
+.clock {
+  border: 1px solid #d5dde4;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.clock-amber {
+  border-color: #9a6a00;
+  background: #fff8e1;
+}
+
+.clock-red {
+  border-color: #b3261e;
+  background: #fdecea;
+}
+
+.clock-stopped {
+  border-style: dashed;
+}
+
 a {
   color: #0f3d5e;
 }
