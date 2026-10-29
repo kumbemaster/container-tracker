@@ -73,6 +73,8 @@ class Stage(models.Model):
     key = models.SlugField(max_length=100, unique=True)
     label = models.CharField(max_length=200)
     is_optional = models.BooleanField(default=False)
+    is_sequenced = models.BooleanField(default=True)
+    is_processing_track = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['order']
