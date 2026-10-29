@@ -92,6 +92,7 @@ class StageEvent(models.Model):
     occurred_at = models.DateTimeField(null=True, blank=True)
     skipped = models.BooleanField(default=False)
     note = models.TextField(blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = [('container', 'stage')]

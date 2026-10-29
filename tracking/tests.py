@@ -1,11 +1,13 @@
 import hashlib
 from datetime import date, datetime, timedelta
 
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
 from . import access as access_helpers
 from . import clocks as clock_helpers
+from . import timeline as timeline_helpers
 from .views import LOCKED_MESSAGE, WRONG_DETAILS_MESSAGE
 from .models import (
     AccessAttempt,
@@ -440,3 +442,164 @@ class TimelineClockViewTests(TestCase):
         self.assertEqual(timeline.status_code, 200)
         self.assertContains(timeline, 'Terminal free time')
         self.assertContains(timeline, 'Shipping line free time')
+
+
+class DemoTimelineViewTests(TestCase):
+    def setUp(self):
+        call_command('seed_demo')
+        self.client.post(
+            '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
+        )
+
+    def test_demo_container_page(self):
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'CSQU3054383')
+        self.assertContains(response, 'DEMOBL001')
+        self.assertContains(response, 'Shipping line processed')
+        self.assertContains(response, 'Current')
+        self.assertContains(response, 'Terminal free time')
+        self.assertContains(response, 'Shipping line free time')
+
+    def test_demo_container2_waiting_line(self):
+        response = self.client.get('/s/DEMO4416733/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Waiting on')
+        self.assertContains(response, 'Customs')
+
+    def test_bl_page_shows_two_cards(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'CSQU3054383')
+        self.assertContains(response, 'DEMO4416733')
+        self.assertContains(response, '/s/CSQU3054383/')
+        self.assertContains(response, '/s/DEMO4416733/')
+
+    def test_no_demo_names_on_pages(self):
+        for url in (
+            '/',
+            '/s/CSQU3054383/',
+            '/s/DEMO4416733/',
+            '/s/DEMOBL001/',
+        ):
+            page = self.client.get(url)
+            self.assertEqual(page.status_code, 200)
+            self.assertNotContains(page, 'Demo Importer A')
+            self.assertNotContains(page, 'Demo Clearing Ltd')
+
+
+class ContainerTimelineTests(TestCase):
+    def setUp(self):
+        call_command('seed_demo')
+        self.container1 = Container.objects.get(number='CSQU3054383')
+        self.container2 = Container.objects.get(number='DEMO4416733')
+
+    def _make_container(self, number):
+        company = AgentCompany.objects.create(name='Timeline Co %s' % number)
+        importer = Importer.objects.create(
+            agent_company=company,
+            name='Timeline Importer %s' % number,
+            access_code='333333',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='TIMELINEBL%s' % number,
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        return Container.objects.create(
+            shipment=shipment, number=number, size='40ft'
+        )
+
+    def _add_event(self, container, key, occurred_at=None, skipped=False):
+        return StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key=key),
+            occurred_at=occurred_at,
+            skipped=skipped,
+        )
+
+    def test_demo_container1_current_and_processing(self):
+        steps = timeline_helpers.build_timeline(self.container1)
+        by_key = {step['key']: step for step in steps}
+        current = [step for step in steps if step['state'] == 'current']
+        self.assertEqual(len(current), 1)
+        self.assertEqual(current[0]['key'], 'shipping_line_processed')
+        self.assertEqual(
+            [step['key'] for step in steps[:5]],
+            [
+                'arrived_at_port',
+                'manifest_available',
+                'paar_assessed',
+                'duty_paid',
+                'shipping_line_processed',
+            ],
+        )
+        processing = {
+            step['key'] for step in steps if step['state'] == 'processing'
+        }
+        self.assertEqual(
+            processing, {'terminal_processed', 'customs_processed'}
+        )
+        self.assertNotIn('en_route_to_bonded_terminal', by_key)
+        self.assertNotIn('customs_examination', by_key)
+        for key in (
+            'gate_out',
+            'in_transit',
+            'delivered',
+            'empty_container_returned',
+        ):
+            self.assertEqual(by_key[key]['state'], 'upcoming')
+
+    def test_demo_container2_states_and_holding(self):
+        steps = timeline_helpers.build_timeline(self.container2)
+        by_key = {step['key']: step for step in steps}
+        current = [step for step in steps if step['state'] == 'current']
+        self.assertEqual(len(current), 1)
+        self.assertEqual(current[0]['key'], 'manifest_available')
+        self.assertEqual(
+            by_key['shipping_line_processed']['state'], 'upcoming'
+        )
+        hold = timeline_helpers.holding(self.container2)
+        self.assertEqual(hold['waiting_on'], 'customs')
+        self.assertEqual(hold['pending_processing'], [])
+
+    def test_optional_selected_shown_and_skipped_hidden(self):
+        container = self._make_container('OPT0000001')
+        self._add_event(container, 'customs_examination')
+        self._add_event(container, 'en_route_to_bonded_terminal', skipped=True)
+        by_key = {
+            step['key']: step
+            for step in timeline_helpers.build_timeline(container)
+        }
+        self.assertEqual(by_key['customs_examination']['state'], 'upcoming')
+        self.assertNotIn('en_route_to_bonded_terminal', by_key)
+
+    def test_stale_after_72_hours(self):
+        old = timezone.now() - timedelta(hours=73)
+        StageEvent.objects.filter(container=self.container1).update(
+            updated_at=old
+        )
+        fresh = timeline_helpers.freshness(self.container1)
+        self.assertTrue(fresh['stale'])
+        self.assertIsNotNone(fresh['updated_at'])
+        recent = timeline_helpers.freshness(self.container2)
+        self.assertFalse(recent['stale'])
+
+    def test_delivered_container_not_stale(self):
+        container = self._make_container('STALE000001')
+        self._add_event(
+            container, 'delivered', occurred_at=timezone.now()
+        )
+        old = timezone.now() - timedelta(hours=100)
+        StageEvent.objects.filter(container=container).update(updated_at=old)
+        fresh = timeline_helpers.freshness(container)
+        self.assertFalse(fresh['stale'])
+
+    def test_holding_pending_processing_labels(self):
+        hold = timeline_helpers.holding(self.container1)
+        self.assertEqual(
+            hold['pending_processing'],
+            ['Terminal processed', 'Customs processed'],
+        )

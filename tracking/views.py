@@ -2,7 +2,10 @@ from django.conf import settings
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
+from django.utils import timezone
+
 from . import access as access_helpers
+from . import timeline as timeline_helpers
 from .clocks import build_clocks
 from .models import Container
 
@@ -117,6 +120,39 @@ def verify(request):
     return _private(response)
 
 
+def _age_display(updated_at, now):
+    if updated_at is None:
+        return 'No updates yet.'
+    seconds = max(0, int((now - updated_at).total_seconds()))
+    if seconds < 60:
+        return 'Last updated just now.'
+    minutes = seconds // 60
+    if minutes < 60:
+        unit = 'minute' if minutes == 1 else 'minutes'
+        return 'Last updated %d %s ago.' % (minutes, unit)
+    hours = minutes // 60
+    if hours < 24:
+        unit = 'hour' if hours == 1 else 'hours'
+        return 'Last updated %d %s ago.' % (hours, unit)
+    days = hours // 24
+    unit = 'day' if days == 1 else 'days'
+    return 'Last updated %d %s ago.' % (days, unit)
+
+
+def _container_context(container):
+    now = timezone.now()
+    fresh = timeline_helpers.freshness(container, now=now)
+    return {
+        'container': container,
+        'shipment': container.shipment,
+        'steps': timeline_helpers.build_timeline(container, now=now),
+        'clocks': build_clocks(container),
+        'fresh': fresh,
+        'age_display': _age_display(fresh['updated_at'], now),
+        'hold': timeline_helpers.holding(container),
+    }
+
+
 @require_GET
 def timeline(request, ref):
     target = access_helpers.find_target(ref)
@@ -126,22 +162,32 @@ def timeline(request, ref):
     if session is None or not access_helpers.has_access(session, _owner_of(target)):
         return _private(redirect('/'))
     if isinstance(target, Container):
-        context = {
-            'container_number': target.number,
-            'clocks': build_clocks(target),
-            'entries': None,
-        }
-    else:
-        entries = [
-            {'number': container.number, 'clocks': build_clocks(container)}
-            for container in target.containers.order_by('number')
-        ]
-        context = {
-            'container_number': None,
-            'clocks': None,
-            'entries': entries,
-        }
-    return _private(render(request, 'tracking/timeline.html', context))
+        context = _container_context(target)
+        context['cards'] = None
+        return _private(render(request, 'tracking/timeline.html', context))
+    containers = list(target.containers.order_by('number'))
+    if len(containers) == 1:
+        context = _container_context(containers[0])
+        context['cards'] = None
+        return _private(render(request, 'tracking/timeline.html', context))
+    cards = []
+    for container in containers:
+        steps = timeline_helpers.build_timeline(container)
+        current = next(
+            (step for step in steps if step['state'] == 'current'), None
+        )
+        cards.append(
+            {
+                'number': container.number,
+                'size': container.size,
+                'current_step': current['label']
+                if current is not None
+                else 'Not started',
+            }
+        )
+    return _private(
+        render(request, 'tracking/timeline.html', {'cards': cards})
+    )
 
 
 @require_GET

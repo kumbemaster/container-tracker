@@ -4,27 +4,58 @@
 
 {% block content %}
 <main class="wrap">
+{% if cards %}
+<h1>Containers on this shipment</h1>
+{% for card in cards %}
 <div class="card">
-<h1>Shipment timeline</h1>
-<p>Full timeline coming soon.</p>
-{% if container_number %}
-<p>Container: {{ container_number }}</p>
+<p><strong>Container: {{ card.number }}</strong> ({{ card.size }})</p>
+<p>Current step: {{ card.current_step }}</p>
+<p><a href="{% url 'timeline' ref=card.number %}">View timeline</a></p>
+</div>
+{% endfor %}
+<p><a href="{% url 'search' %}">Back to search</a></p>
+{% else %}
+<div class="card">
+<h1>Container {{ container.number }}</h1>
+<dl class="summary">
+<div><dt>Size</dt><dd>{{ container.size }}</dd></div>
+<div><dt>Bill of lading</dt><dd>{{ shipment.bl_number }}</dd></div>
+<div><dt>Shipping line</dt><dd>{{ shipment.shipping_line }}</dd></div>
+<div><dt>Port</dt><dd>{{ shipment.port }}</dd></div>
+<div><dt>Destination</dt><dd>{{ shipment.destination_area }}</dd></div>
+</dl>
+<p class="freshness">{{ age_display }}</p>
+{% if fresh.stale %}
+<p class="stale">This information may be out of date.</p>
+{% endif %}
 {% for clock in clocks %}
 {% include "tracking/_clock.html" with clock=clock %}
 {% endfor %}
+{% if hold.waiting_on != 'nobody' %}
+<p class="waiting"><strong>Waiting on:</strong> {{ hold.waiting_on_label }}{% if hold.waiting_on_since %} since {{ hold.waiting_on_since|date:"j M Y, H:i" }}{% endif %}{% if hold.waiting_on_note %} &mdash; {{ hold.waiting_on_note }}{% endif %}</p>
 {% endif %}
-{% if entries %}
-<ul>
-{% for entry in entries %}
-<li>{{ entry.number }}
-{% for clock in entry.clocks %}
-{% include "tracking/_clock.html" with clock=clock %}
-{% endfor %}
+{% if hold.pending_processing %}
+<p class="held-at">Held at: {{ hold.pending_processing|join:", " }}</p>
+{% endif %}
+</div>
+<div class="card">
+<h2>Timeline</h2>
+<ol class="tl">
+{% for step in steps %}
+<li class="tl-{{ step.state }}">
+<span class="tl-dot" aria-hidden="true">{% if step.state == 'completed' %}&#10003;{% elif step.state == 'current' %}&#9679;{% elif step.state == 'processing' %}&#9681;{% else %}&#9675;{% endif %}</span>
+<div class="tl-body">
+<strong>{{ step.label }}</strong>
+{% if step.state == 'current' %} <span class="tag tag-current">Current</span>{% endif %}
+{% if step.state == 'processing' %} <span class="tag tag-processing">Processing</span>{% endif %}
+{% if step.state == 'upcoming' %} <span class="tag tag-muted">Upcoming</span>{% endif %}
+{% if step.occurred_at %}<br><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time>{% endif %}
+</div>
 </li>
 {% endfor %}
-</ul>
-{% endif %}
+</ol>
 <p><a href="{% url 'search' %}">Back to search</a></p>
 </div>
+{% endif %}
 </main>
 {% endblock %}
