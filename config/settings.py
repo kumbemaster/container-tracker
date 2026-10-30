@@ -130,6 +130,18 @@ LOGIN_REDIRECT_URL = '/agent/shipments/'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# Meta model API for the BL scan feature. The key is read only from the
+# MODEL_API_KEY environment variable and never stored in code.
+META_API_BASE_URL = os.environ.get(
+    'META_API_BASE_URL', 'https://api.meta.ai/v1'
+)
+META_MODEL = os.environ.get('META_MODEL', 'muse-spark-1.3')
+META_API_KEY = os.environ.get('MODEL_API_KEY', '')
+
+# Private upload storage. Files under MEDIA_ROOT are served only through
+# the company-checked document view, never through static or media URLs.
+MEDIA_ROOT = BASE_DIR / 'media'
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

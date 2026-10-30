@@ -1,12 +1,16 @@
+import logging
+import mimetypes
 import secrets
 from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.views import LoginView
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Case, Count, F, Max, When
 from django.forms.utils import ErrorDict
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -15,16 +19,21 @@ from django.views.decorators.http import require_GET, require_POST
 from . import access as access_helpers
 from . import stage_rules
 from . import timeline as timeline_helpers
-from .forms import ShipmentForm
+from .ai.extract_bl import extract_shipment
+from .forms import ShipmentForm, normalise_number
 from .models import (
     AuditLog,
     Container,
+    Document,
     Importer,
     Shipment,
     StaffMember,
     Stage,
     StageEvent,
 )
+from .validators import is_valid_container_number
+
+logger = logging.getLogger(__name__)
 
 LOGIN_FAILURE_MESSAGE = 'Incorrect username or password.'
 LOGIN_LOCKED_MESSAGE = 'Too many attempts. Please try again in 15 minutes.'
@@ -152,6 +161,12 @@ def _random_code():
 @agent_required
 def shipment_new(request):
     company = request.agent_company
+    context = {
+        'uncertain': [],
+        'prefill': False,
+        'scan_document': None,
+        'importer_check': False,
+    }
     if request.method == 'POST':
         form = ShipmentForm(company, request.POST)
         if form.is_valid():
@@ -174,7 +189,9 @@ def shipment_new(request):
                     Container.objects.create(
                         shipment=shipment, number=number, size=size
                     )
+                _link_scan_document(request, company, shipment)
             return redirect('agent_shipment_detail', pk=shipment.pk)
+        _restore_scan_context(request, company, form, context)
     else:
         initial = {}
         raw_preselected = request.GET.get('importer') or ''
@@ -185,9 +202,124 @@ def shipment_new(request):
             if preselected is not None:
                 initial['importer'] = preselected
         form = ShipmentForm(company, initial=initial)
-    return render(
-        request, 'tracking/agent_shipment_new.html', {'form': form}
+        _apply_scan_prefill(request, company, form, context)
+    context['form'] = form
+    return render(request, 'tracking/agent_shipment_new.html', context)
+
+
+def _scan_session_key(document_pk):
+    return 'bl_scan_%d' % document_pk
+
+
+def _scan_result(request, company, raw_id):
+    """Return (document_pk, result) for a company-owned scan, else None."""
+    if not (raw_id or '').isdigit():
+        return None
+    document = Document.objects.filter(
+        pk=int(raw_id), company=company
+    ).first()
+    if document is None:
+        return None
+    result = request.session.get(_scan_session_key(document.pk))
+    if not isinstance(result, dict):
+        return None
+    return document.pk, result
+
+
+def _flag_scan_rows(rows):
+    for row in rows:
+        number = normalise_number(row.get('number'))
+        row['check'] = (not is_valid_container_number(number)) or not (
+            row.get('size') or ''
+        ).strip()
+
+
+def _apply_scan_prefill(request, company, form, context):
+    """Prefill the unbound form from a scan result kept in the session."""
+    found = _scan_result(request, company, request.GET.get('scan'))
+    if found is None:
+        return
+    document_pk, result = found
+    uncertain = [
+        field for field in result.get('uncertain') or [] if field
+    ]
+    if result.get('bl_number'):
+        form.initial['bl_number'] = result['bl_number']
+    for key in ('shipping_line', 'port', 'destination_area'):
+        if result.get(key):
+            form.initial[key] = result[key]
+    importer_name = (result.get('importer_name') or '').strip()
+    if importer_name:
+        match = Importer.objects.filter(
+            agent_company=company, name__iexact=importer_name
+        ).first()
+        if match is not None:
+            form.initial['importer'] = match.pk
+        else:
+            form.initial['new_importer_name'] = importer_name
+    rows = []
+    for item in result.get('containers') or []:
+        rows.append(
+            {
+                'number': item.get('number') or '',
+                'size': item.get('size') or '',
+                'errors': [],
+                'check': (not item.get('valid'))
+                or not item.get('size'),
+            }
+        )
+    if rows:
+        form.rows = rows
+    for field in ('bl_number', 'shipping_line', 'port', 'destination_area'):
+        if field in uncertain:
+            form.fields[field].widget.attrs['class'] = 'check-field'
+    context.update(
+        {
+            'uncertain': uncertain,
+            'prefill': True,
+            'scan_document': document_pk,
+            'importer_check': 'importer_name' in uncertain,
+        }
     )
+
+
+def _restore_scan_context(request, company, form, context):
+    """Keep the scan banner and highlights when a prefilled POST fails."""
+    found = _scan_result(
+        request, company, request.POST.get('scan_document')
+    )
+    if found is None:
+        return
+    document_pk, result = found
+    uncertain = [
+        field for field in result.get('uncertain') or [] if field
+    ]
+    _flag_scan_rows(form.rows)
+    for field in ('bl_number', 'shipping_line', 'port', 'destination_area'):
+        if field in uncertain:
+            form.fields[field].widget.attrs['class'] = 'check-field'
+    context.update(
+        {
+            'uncertain': uncertain,
+            'prefill': True,
+            'scan_document': document_pk,
+            'importer_check': 'importer_name' in uncertain,
+        }
+    )
+
+
+def _link_scan_document(request, company, shipment):
+    """Link a scan document to a newly saved shipment."""
+    found = _scan_result(
+        request, company, request.POST.get('scan_document')
+    )
+    if found is None:
+        return
+    document_pk, _ = found
+    Document.objects.filter(pk=document_pk, company=company).update(
+        shipment=shipment
+    )
+    request.session.pop(_scan_session_key(document_pk), None)
 
 
 def _scoped_shipment(request, pk):
@@ -559,6 +691,81 @@ def importer_rotate(request, pk):
     )
     access_helpers.rotate_code(importer, _random_code())
     return redirect('agent_importers')
+
+
+SCAN_MAX_BYTES = 8 * 1024 * 1024
+SCAN_DAILY_LIMIT = 50
+SCAN_CONTENT_TYPES = {'image/jpeg', 'image/png'}
+_JPEG_SIG = b'\xff\xd8\xff'
+_PNG_SIG = b'\x89PNG\r\n\x1a\n'
+
+
+def _scan_upload_error(upload):
+    """Check the content type, size and file signature of a scan upload."""
+    if upload is None:
+        return 'Choose a JPEG or PNG file to scan.'
+    if upload.content_type not in SCAN_CONTENT_TYPES:
+        return 'Only JPEG or PNG files can be scanned.'
+    if upload.size > SCAN_MAX_BYTES:
+        return 'The file must be 8 MB or smaller.'
+    head = upload.read(8)
+    upload.seek(0)
+    if head[:3] != _JPEG_SIG and head != _PNG_SIG:
+        return 'Only JPEG or PNG files can be scanned.'
+    return None
+
+
+@agent_required
+def shipment_scan(request):
+    company = request.agent_company
+    if request.method == 'POST':
+        upload = request.FILES.get('scan')
+        error = _scan_upload_error(upload)
+        if error is None and Document.objects.filter(
+            company=company,
+            kind=Document.Kind.BL,
+            created_at__date=timezone.localdate(),
+        ).count() >= SCAN_DAILY_LIMIT:
+            error = 'You have reached the daily scan limit (50 per day).'
+        if error is not None:
+            return render(
+                request, 'tracking/agent_scan.html', {'error': error}
+            )
+        data = upload.read()
+        document = Document.objects.create(
+            company=company,
+            uploaded_by=request.user,
+            kind=Document.Kind.BL,
+        )
+        extension = '.png' if data[:4] == _PNG_SIG[:4] else '.jpg'
+        document.file.save(
+            'scan-%d%s' % (document.pk, extension), ContentFile(data)
+        )
+        try:
+            result = extract_shipment(data)
+        except Exception:
+            logger.warning('bl scan failed document=%d', document.pk)
+            return render(
+                request, 'tracking/agent_scan.html', {'scan_failed': True}
+            )
+        request.session[_scan_session_key(document.pk)] = result
+        return redirect(
+            '%s?scan=%d' % (reverse('agent_shipment_new'), document.pk)
+        )
+    return render(request, 'tracking/agent_scan.html', {})
+
+
+@agent_required
+@require_GET
+def document_file(request, pk):
+    document = get_object_or_404(
+        Document, pk=pk, company=request.agent_company
+    )
+    content_type, _ = mimetypes.guess_type(document.file.name)
+    return FileResponse(
+        document.file.open('rb'),
+        content_type=content_type or 'application/octet-stream',
+    )
 
 
 @agent_required

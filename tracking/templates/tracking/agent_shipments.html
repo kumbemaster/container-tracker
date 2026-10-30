@@ -6,7 +6,7 @@
 <main class="wrap">
 <div class="card">
 <h1>Shipments</h1>
-<p><a href="{% url 'agent_shipment_new' %}">New shipment</a></p>
+<p><a href="{% url 'agent_shipment_new' %}">New shipment</a> · <a href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if rows %}
 <table class="agent-table">
 <thead>

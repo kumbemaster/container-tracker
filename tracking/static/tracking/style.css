@@ -303,6 +303,26 @@ textarea {
   padding: 0.75rem;
 }
 
+.scan-banner {
+  background: var(--ok-bg);
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.check-note {
+  color: var(--amber);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.check-row input,
+.check-row select,
+input.check-field {
+  outline: 2px solid #e3b008;
+  outline-offset: 1px;
+}
+
 fieldset {
   border: 1px solid var(--line);
   border-radius: 8px;

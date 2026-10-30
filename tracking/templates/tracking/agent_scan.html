@@ -1,0 +1,25 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Scan a BL{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Scan a BL</h1>
+<p class="help">Scans are read by an AI model. Check every field before saving.</p>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+{% if scan_failed %}
+<p class="error">We could not read this document. You can enter the shipment manually.</p>
+<p><a href="{% url 'agent_shipment_new' %}">Enter the shipment manually</a></p>
+{% endif %}
+<form method="post" action="{% url 'agent_shipment_scan' %}" enctype="multipart/form-data">
+{% csrf_token %}
+<p><label for="id-scan">Bill of lading image (JPEG or PNG, up to 8 MB)</label>
+<input id="id-scan" type="file" name="scan" accept="image/jpeg,image/png" required></p>
+<button type="submit">Scan</button>
+</form>
+</div>
+</main>
+{% endblock %}

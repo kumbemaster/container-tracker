@@ -4,6 +4,7 @@ from .models import (
     AgentCompany,
     AuditLog,
     Container,
+    Document,
     Importer,
     Shipment,
     StaffMember,
@@ -19,3 +20,4 @@ admin.site.register(Stage)
 admin.site.register(StageEvent)
 admin.site.register(StaffMember)
 admin.site.register(AuditLog)
+admin.site.register(Document)

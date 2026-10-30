@@ -29,6 +29,11 @@ urlpatterns = [
         name='agent_shipment_new',
     ),
     path(
+        'agent/shipments/scan/',
+        agent_views.shipment_scan,
+        name='agent_shipment_scan',
+    ),
+    path(
         'agent/shipments/<int:pk>/',
         agent_views.shipment_detail,
         name='agent_shipment_detail',
@@ -77,5 +82,10 @@ urlpatterns = [
         'agent/importers/<int:pk>/rename/',
         agent_views.importer_rename,
         name='agent_importer_rename',
+    ),
+    path(
+        'agent/documents/<int:pk>/',
+        agent_views.document_file,
+        name='agent_document',
     ),
 ]
