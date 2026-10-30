@@ -442,6 +442,128 @@ class AgentTests(TestCase):
             source = (Path(__file__).parent / name).read_text()
             self.assertNotIn('csrf_exempt', source)
 
+    def test_importer_shown_by_name_only(self):
+        company = self._company('Acme Clearing Ltd')
+        user = self._agent(company, 'solo-viewer')
+        importer = self._importer(company, name='Solo Foods')
+        shipment = self._shipment(importer, bl='SOLOBL001')
+        self.client.force_login(user)
+        response = self.client.get('/agent/importers/')
+        self.assertContains(response, 'Solo Foods')
+        self.assertNotContains(response, 'Acme Clearing Ltd')
+        response = self.client.get('/agent/shipments/new/')
+        self.assertContains(response, '>Solo Foods</option>')
+        self.assertNotContains(response, 'Acme Clearing Ltd')
+        response = self.client.get('/agent/shipments/')
+        self.assertContains(response, 'Solo Foods')
+        self.assertNotContains(response, 'Acme Clearing Ltd')
+        response = self.client.get(
+            '/agent/shipments/%d/' % shipment.pk
+        )
+        self.assertContains(response, 'Solo Foods')
+        self.assertNotContains(response, 'Acme Clearing Ltd')
+        response = self.client.post(
+            '/agent/importers/add/', {'name': 'Second Foods'}, follow=True
+        )
+        self.assertContains(response, 'Second Foods')
+        self.assertNotContains(response, 'Acme Clearing Ltd')
+
+    def _rename(self, pk, name):
+        return self.client.post(
+            '/agent/importers/%d/rename/' % pk,
+            {'name': name},
+            follow=True,
+        )
+
+    def test_rename_importer_keeps_code(self):
+        company = self._company('Rename Co')
+        user = self._agent(company, 'renamer')
+        importer = self._importer(company, name='Old Foods')
+        session, _ = access_helpers.create_device_session()
+        access_helpers.grant_access(session, importer)
+        code = importer.access_code
+        self.client.force_login(user)
+        response = self.client.get('/agent/importers/')
+        self.assertContains(response, 'Edit name')
+        response = self._rename(importer.pk, '  New Foods  ')
+        self.assertContains(response, 'Renamed importer to New Foods.')
+        importer.refresh_from_db()
+        self.assertEqual(importer.name, 'New Foods')
+        self.assertEqual(importer.access_code, code)
+        self.assertTrue(
+            access_helpers.has_access(session, importer)
+        )
+
+    def test_rename_to_existing_name_refused(self):
+        company = self._company('Rename Dup Co')
+        user = self._agent(company, 'rename-dupper')
+        alpha = self._importer(company, name='Alpha Foods')
+        self._importer(company, name='Beta Foods')
+        self.client.force_login(user)
+        for clash in ('Beta Foods', 'beta foods', 'BETA FOODS'):
+            response = self._rename(alpha.pk, clash)
+            self.assertContains(response, 'already exists')
+        alpha.refresh_from_db()
+        self.assertEqual(alpha.name, 'Alpha Foods')
+
+    def test_rename_case_change_allowed(self):
+        company = self._company('Rename Case Co')
+        user = self._agent(company, 'rename-caser')
+        importer = self._importer(company, name='Alpha Foods')
+        self.client.force_login(user)
+        response = self._rename(importer.pk, 'ALPHA FOODS')
+        self.assertContains(response, 'Renamed importer to ALPHA FOODS.')
+        importer.refresh_from_db()
+        self.assertEqual(importer.name, 'ALPHA FOODS')
+
+    def test_rename_empty_refused(self):
+        company = self._company('Rename Blank Co')
+        user = self._agent(company, 'rename-blanker')
+        importer = self._importer(company, name='Kept Foods')
+        self.client.force_login(user)
+        for blank in ('', '   '):
+            response = self._rename(importer.pk, blank)
+            self.assertContains(response, 'Enter an importer name.')
+        importer.refresh_from_db()
+        self.assertEqual(importer.name, 'Kept Foods')
+
+    def test_rename_other_company_404(self):
+        company_a = self._company('Rename A')
+        company_b = self._company('Rename B')
+        user_a = self._agent(company_a, 'rename-a')
+        importer_b = self._importer(company_b, name='B Foods')
+        self.client.force_login(user_a)
+        response = self.client.post(
+            '/agent/importers/%d/rename/' % importer_b.pk,
+            {'name': 'Taken Foods'},
+        )
+        self.assertEqual(response.status_code, 404)
+        importer_b.refresh_from_db()
+        self.assertEqual(importer_b.name, 'B Foods')
+
+    def test_rename_requires_login(self):
+        response = self.client.post(
+            '/agent/importers/1/rename/', {'name': 'Nope'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            response['Location'].startswith('/agent/login/')
+        )
+
+    def test_no_delete_route(self):
+        company = self._company('No Delete Co')
+        user = self._agent(company, 'no-deleter')
+        importer = self._importer(company, name='Stay Foods')
+        self.client.force_login(user)
+        for method in ('get', 'post'):
+            response = getattr(self.client, method)(
+                '/agent/importers/%d/delete/' % importer.pk
+            )
+            self.assertEqual(response.status_code, 404)
+        self.assertTrue(
+            Importer.objects.filter(pk=importer.pk).exists()
+        )
+
 
 class RenderedFormTests(TestCase):
     def setUp(self):

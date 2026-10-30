@@ -559,3 +559,31 @@ def importer_rotate(request, pk):
     )
     access_helpers.rotate_code(importer, _random_code())
     return redirect('agent_importers')
+
+
+@agent_required
+@require_POST
+def importer_rename(request, pk):
+    importer = get_object_or_404(
+        Importer, pk=pk, agent_company=request.agent_company
+    )
+    name = (request.POST.get('name') or '').strip()
+    if not name:
+        messages.error(request, 'Enter an importer name.')
+    elif len(name) > 200:
+        messages.error(
+            request, 'Importer name must be 200 characters or fewer.'
+        )
+    elif Importer.objects.filter(
+        agent_company=request.agent_company, name__iexact=name
+    ).exclude(pk=importer.pk).exists():
+        messages.error(
+            request, 'An importer called %s already exists.' % name
+        )
+    else:
+        importer.name = name
+        importer.save(update_fields=['name'])
+        messages.success(
+            request, 'Renamed importer to %s.' % importer.name
+        )
+    return redirect('agent_importers')

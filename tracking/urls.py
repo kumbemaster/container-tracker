@@ -73,4 +73,9 @@ urlpatterns = [
         agent_views.importer_rotate,
         name='agent_importer_rotate',
     ),
+    path(
+        'agent/importers/<int:pk>/rename/',
+        agent_views.importer_rename,
+        name='agent_importer_rename',
+    ),
 ]

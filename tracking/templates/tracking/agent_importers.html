@@ -8,7 +8,7 @@
 <h2>Add importer</h2>
 {% if messages %}
 {% for agent_message in messages %}
-<p class="error">{{ agent_message }}</p>
+<p class="{{ agent_message.tags }}">{{ agent_message }}</p>
 {% endfor %}
 {% endif %}
 <form method="post" action="{% url 'agent_importer_add' %}">
@@ -30,7 +30,7 @@
 {% if importers %}
 <table class="agent-table">
 <thead>
-<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th>Shipments</th><th></th><th></th></tr>
+<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th>Shipments</th><th></th><th></th><th></th></tr>
 </thead>
 <tbody>
 {% for importer in importers %}
@@ -41,6 +41,17 @@
 <td>{% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y, H:i" }}{% else %}—{% endif %}</td>
 <td>{{ importer.shipment_count }}</td>
 <td><a href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a></td>
+<td>
+<details>
+<summary>Edit name</summary>
+<form method="post" action="{% url 'agent_importer_rename' pk=importer.pk %}">
+{% csrf_token %}
+<p><label for="rename-{{ importer.pk }}">Importer name</label>
+<input id="rename-{{ importer.pk }}" type="text" name="name" value="{{ importer.name }}" maxlength="200" required></p>
+<button type="submit" class="small-btn">Save</button>
+</form>
+</details>
+</td>
 <td>
 <form method="post" action="{% url 'agent_importer_rotate' pk=importer.pk %}">
 {% csrf_token %}

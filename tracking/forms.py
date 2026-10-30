@@ -35,6 +35,7 @@ class ShipmentForm(forms.Form):
         self.fields['importer'].queryset = Importer.objects.filter(
             agent_company=company
         ).order_by('name')
+        self.fields['importer'].label_from_instance = lambda obj: obj.name
         self.company = company
         self.rows = self._rows_from_data() if self.is_bound else [self._blank_row()]
 
