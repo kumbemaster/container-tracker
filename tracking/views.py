@@ -211,8 +211,3 @@ def timeline(request, ref):
             },
         )
     )
-
-
-@require_GET
-def agent_login(request):
-    return _private(render(request, 'tracking/agent_login.html'))

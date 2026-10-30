@@ -1,0 +1,35 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Shipment {{ shipment.bl_number }}{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1 class="mono">{{ shipment.bl_number }}</h1>
+<dl class="summary">
+<div><dt>Importer</dt><dd>{{ shipment.importer.name }}</dd></div>
+<div><dt>Shipping line</dt><dd>{{ shipment.shipping_line }}</dd></div>
+<div><dt>Port</dt><dd>{{ shipment.port }}</dd></div>
+<div><dt>Destination</dt><dd>{{ shipment.destination_area }}</dd></div>
+<div><dt>Access code</dt><dd class="mono">{{ shipment.importer.access_code }}</dd></div>
+</dl>
+<p id="copy-msg">{{ message }}</p>
+<p><button type="button" id="copy-btn">Copy</button></p>
+</div>
+<div class="card">
+<h2>Containers</h2>
+<ul>
+{% for entry in entries %}
+<li><span class="mono">{{ entry.container.number }}</span> ({{ entry.container.size }}) — {{ entry.current_step }}</li>
+{% empty %}
+<li>No containers yet.</li>
+{% endfor %}
+</ul>
+</div>
+</main>
+<script>
+document.getElementById('copy-btn').addEventListener('click', function () {
+  navigator.clipboard.writeText(document.getElementById('copy-msg').textContent);
+});
+</script>
+{% endblock %}

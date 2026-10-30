@@ -1,0 +1,32 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}New shipment{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>New shipment</h1>
+{% if form.non_field_errors %}
+<p class="error">{{ form.non_field_errors }}</p>
+{% endif %}
+<form method="post" action="{% url 'agent_shipment_new' %}">
+{% csrf_token %}
+<p>{{ form.importer.label_tag }} {{ form.importer }} {{ form.importer.errors }}</p>
+<p>{{ form.new_importer_name.label_tag }} {{ form.new_importer_name }} {{ form.new_importer_name.errors }}<br><span class="help">{{ form.new_importer_name.help_text }}</span></p>
+<p>{{ form.bl_number.label_tag }} {{ form.bl_number }} {{ form.bl_number.errors }}</p>
+<p>{{ form.shipping_line.label_tag }} {{ form.shipping_line }} {{ form.shipping_line.errors }}</p>
+<p>{{ form.port.label_tag }} {{ form.port }} {{ form.port.errors }}</p>
+<p>{{ form.destination_area.label_tag }} {{ form.destination_area }} {{ form.destination_area.errors }}</p>
+<p>{{ form.discharge_date.label_tag }} {{ form.discharge_date }} {{ form.discharge_date.errors }}</p>
+<p>{{ form.containers.label_tag }} {{ form.containers }} {{ form.containers.errors }}<br><span class="help">{{ form.containers.help_text }}</span></p>
+<details class="fold">
+<summary>Free time (optional)</summary>
+<p>{{ form.shipping_line_free_days.label_tag }} {{ form.shipping_line_free_days }} {{ form.shipping_line_free_days.errors }}</p>
+<p>{{ form.terminal_free_days.label_tag }} {{ form.terminal_free_days }} {{ form.terminal_free_days.errors }}</p>
+<p>{{ form.return_window_days.label_tag }} {{ form.return_window_days }} {{ form.return_window_days.errors }}</p>
+</details>
+<button type="submit">Create shipment</button>
+</form>
+</div>
+</main>
+{% endblock %}

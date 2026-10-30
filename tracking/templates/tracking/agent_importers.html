@@ -1,0 +1,36 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Importers{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Importers</h1>
+{% if importers %}
+<table class="agent-table">
+<thead>
+<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th></th></tr>
+</thead>
+<tbody>
+{% for importer in importers %}
+<tr>
+<td>{{ importer.name }}</td>
+<td class="mono">{{ importer.access_code }}</td>
+<td>{% if importer.access_active %}yes{% else %}no{% endif %}</td>
+<td>{% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y, H:i" }}{% else %}—{% endif %}</td>
+<td>
+<form method="post" action="{% url 'agent_importer_rotate' pk=importer.pk %}">
+{% csrf_token %}
+<button type="submit" class="small-btn">Rotate code</button>
+</form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>No importers yet.</p>
+{% endif %}
+</div>
+</main>
+{% endblock %}

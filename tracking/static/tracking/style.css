@@ -1,5 +1,5 @@
 :root {
-  --bg: #ffffff;
+  --bg: #eceff3;
   --card: #ffffff;
   --ink: #14202b;
   --muted: #5b6b7a;
@@ -233,7 +233,12 @@ label {
   color: var(--muted);
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="password"],
+input[type="date"],
+input[type="number"],
+select,
+textarea {
   width: 100%;
   min-height: 44px;
   font-size: 1.1rem;
@@ -242,6 +247,51 @@ input[type="text"] {
   border-radius: 8px;
   color: var(--ink);
   background: var(--card);
+  font-family: inherit;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--brand);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.4rem 0.6rem;
+}
+
+.logout-form {
+  display: inline;
+}
+
+.logout-btn {
+  display: inline-block;
+  width: auto;
+  min-height: 44px;
+  margin-top: 0;
+  padding: 0.4rem 0.9rem;
+  font-size: 1rem;
+}
+
+.agent-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.agent-table th,
+.agent-table td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.small-btn {
+  width: auto;
+  min-height: 44px;
+  margin-top: 0;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.95rem;
 }
 
 button {

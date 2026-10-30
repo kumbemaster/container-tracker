@@ -1,0 +1,38 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Shipments{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Shipments</h1>
+<p><a href="{% url 'agent_shipment_new' %}">New shipment</a></p>
+{% if rows %}
+<table class="agent-table">
+<thead>
+<tr><th>BL number</th><th>Importer</th><th>Containers</th><th>Current step</th><th>Updated</th><th></th></tr>
+</thead>
+<tbody>
+{% for row in rows %}
+<tr>
+<td class="mono">{{ row.shipment.bl_number }}</td>
+<td>{{ row.shipment.importer.name }}</td>
+<td>{{ row.shipment.container_count }}</td>
+<td>{{ row.current_step }}</td>
+<td>{% if row.days_since_update is None %}—{% elif row.days_since_update == 0 %}today{% elif row.days_since_update == 1 %}1 day ago{% else %}{{ row.days_since_update }} days ago{% endif %}</td>
+<td><a href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>No shipments yet.</p>
+{% endif %}
+{% if show_closed %}
+<p><a href="{% url 'agent_shipments' %}">Hide closed shipments</a></p>
+{% else %}
+<p><a href="{% url 'agent_shipments' %}?show=closed">Show closed shipments</a></p>
+{% endif %}
+</div>
+</main>
+{% endblock %}

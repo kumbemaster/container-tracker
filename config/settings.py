@@ -124,6 +124,12 @@ STATIC_URL = 'static/'
 # Importer pages: show free-time and return-window clocks.
 SHOW_FREE_TIME_CLOCKS = False
 
+LOGIN_URL = '/agent/login/'
+LOGIN_REDIRECT_URL = '/agent/shipments/'
+
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

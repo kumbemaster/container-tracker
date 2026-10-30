@@ -140,3 +140,18 @@ class AccessAttempt(models.Model):
 
     def __str__(self):
         return f'{self.key} at {self.created_at}'
+
+
+class StaffMember(models.Model):
+    class Role(models.TextChoices):
+        OWNER = 'owner', 'Owner'
+        STAFF = 'staff', 'Staff'
+
+    user = models.OneToOneField('auth.User', on_delete=models.CASCADE)
+    agent_company = models.ForeignKey(AgentCompany, on_delete=models.CASCADE)
+    role = models.CharField(
+        max_length=20, choices=Role.choices, default=Role.STAFF
+    )
+
+    def __str__(self):
+        return f'{self.user.username} ({self.agent_company})'
