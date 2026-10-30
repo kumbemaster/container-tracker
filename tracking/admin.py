@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     AgentCompany,
+    AuditLog,
     Container,
     Importer,
     Shipment,
@@ -17,3 +18,4 @@ admin.site.register(Container)
 admin.site.register(Stage)
 admin.site.register(StageEvent)
 admin.site.register(StaffMember)
+admin.site.register(AuditLog)

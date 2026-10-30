@@ -13,20 +13,73 @@
 {% csrf_token %}
 <p>{{ form.importer.label_tag }} {{ form.importer }} {{ form.importer.errors }}</p>
 <p>{{ form.new_importer_name.label_tag }} {{ form.new_importer_name }} {{ form.new_importer_name.errors }}<br><span class="help">{{ form.new_importer_name.help_text }}</span></p>
-<p>{{ form.bl_number.label_tag }} {{ form.bl_number }} {{ form.bl_number.errors }}</p>
+<p>{{ form.bl_number.label_tag }} {{ form.bl_number }} {{ form.bl_number.errors }}<br><span class="help">{{ form.bl_number.help_text }}</span></p>
 <p>{{ form.shipping_line.label_tag }} {{ form.shipping_line }} {{ form.shipping_line.errors }}</p>
 <p>{{ form.port.label_tag }} {{ form.port }} {{ form.port.errors }}</p>
 <p>{{ form.destination_area.label_tag }} {{ form.destination_area }} {{ form.destination_area.errors }}</p>
-<p>{{ form.discharge_date.label_tag }} {{ form.discharge_date }} {{ form.discharge_date.errors }}</p>
-<p>{{ form.containers.label_tag }} {{ form.containers }} {{ form.containers.errors }}<br><span class="help">{{ form.containers.help_text }}</span></p>
-<details class="fold">
-<summary>Free time (optional)</summary>
-<p>{{ form.shipping_line_free_days.label_tag }} {{ form.shipping_line_free_days }} {{ form.shipping_line_free_days.errors }}</p>
-<p>{{ form.terminal_free_days.label_tag }} {{ form.terminal_free_days }} {{ form.terminal_free_days.errors }}</p>
-<p>{{ form.return_window_days.label_tag }} {{ form.return_window_days }} {{ form.return_window_days.errors }}</p>
-</details>
+<fieldset id="container-rows">
+<legend>Containers</legend>
+{% for row in form.rows %}
+<div class="crow">
+<p><label for="c-number-{{ forloop.counter0 }}">Container number</label>
+<input id="c-number-{{ forloop.counter0 }}" class="upper" type="text" name="c_number" value="{{ row.number }}" required></p>
+<p><label for="c-size-{{ forloop.counter0 }}">Size</label>
+<select id="c-size-{{ forloop.counter0 }}" name="c_size" required>
+<option value="">Size</option>
+<option value="20ft"{% if row.size == '20ft' %} selected{% endif %}>20ft</option>
+<option value="40ft"{% if row.size == '40ft' %} selected{% endif %}>40ft</option>
+<option value="40HC"{% if row.size == '40HC' %} selected{% endif %}>40HC</option>
+</select></p>
+<button type="button" class="small-btn remove-row">Remove</button>
+{% if row.errors %}
+<ul class="row-errors">
+{% for row_error in row.errors %}
+<li>{{ row_error }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+</div>
+{% endfor %}
+</fieldset>
+<p><button type="button" id="add-row" class="small-btn">Add container</button></p>
+<p class="help">Container numbers have 4 letters and 7 digits.</p>
 <button type="submit">Create shipment</button>
 </form>
 </div>
 </main>
+<script>
+(function () {
+  var rows = document.getElementById('container-rows');
+  if (!rows) return;
+  function refreshRemove() {
+    var list = rows.querySelectorAll('.crow');
+    rows.querySelectorAll('.remove-row').forEach(function (btn) {
+      btn.style.display = list.length > 1 ? '' : 'none';
+    });
+  }
+  var nextId = rows.querySelectorAll('.crow').length;
+  document.getElementById('add-row').addEventListener('click', function () {
+    var list = rows.querySelectorAll('.crow');
+    var last = list[list.length - 1];
+    var copy = last.cloneNode(true);
+    var number = copy.querySelector('input[name="c_number"]');
+    var size = copy.querySelector('select[name="c_size"]');
+    number.value = '';
+    number.id = 'c-number-' + nextId;
+    size.id = 'c-size-' + nextId;
+    copy.querySelector('label[for^="c-number-"]').setAttribute('for', number.id);
+    copy.querySelector('label[for^="c-size-"]').setAttribute('for', size.id);
+    nextId += 1;
+    rows.appendChild(copy);
+    refreshRemove();
+  });
+  rows.addEventListener('click', function (e) {
+    if (!e.target.classList.contains('remove-row')) return;
+    var list = rows.querySelectorAll('.crow');
+    if (list.length > 1) e.target.closest('.crow').remove();
+    refreshRemove();
+  });
+  refreshRemove();
+})();
+</script>
 {% endblock %}

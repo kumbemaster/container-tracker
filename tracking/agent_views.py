@@ -2,18 +2,29 @@ import secrets
 from functools import wraps
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.views import LoginView
 from django.db import transaction
 from django.db.models import Case, Count, F, Max, When
 from django.forms.utils import ErrorDict
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from . import access as access_helpers
+from . import stage_rules
 from . import timeline as timeline_helpers
 from .forms import ShipmentForm
-from .models import Container, Importer, Shipment, StaffMember, Stage
+from .models import (
+    AuditLog,
+    Container,
+    Importer,
+    Shipment,
+    StaffMember,
+    Stage,
+    StageEvent,
+)
 
 LOGIN_FAILURE_MESSAGE = 'Incorrect username or password.'
 LOGIN_LOCKED_MESSAGE = 'Too many attempts. Please try again in 15 minutes.'
@@ -154,12 +165,10 @@ def shipment_new(request):
                     )
                 shipment = Shipment.objects.create(
                     importer=importer,
-                    bl_number=form.cleaned_data['bl_number'].strip().upper(),
+                    bl_number=form.cleaned_data['bl_number'],
                     shipping_line=form.cleaned_data['shipping_line'],
                     port=form.cleaned_data['port'],
                     destination_area=form.cleaned_data['destination_area'],
-                    discharge_date=form.cleaned_data['discharge_date'],
-                    **form.free_days(),
                 )
                 for number, size in form.container_rows():
                     Container.objects.create(
@@ -167,44 +176,379 @@ def shipment_new(request):
                     )
             return redirect('agent_shipment_detail', pk=shipment.pk)
     else:
-        form = ShipmentForm(company)
+        initial = {}
+        raw_preselected = request.GET.get('importer') or ''
+        if raw_preselected.isdigit():
+            preselected = Importer.objects.filter(
+                pk=int(raw_preselected), agent_company=company
+            ).first()
+            if preselected is not None:
+                initial['importer'] = preselected
+        form = ShipmentForm(company, initial=initial)
     return render(
         request, 'tracking/agent_shipment_new.html', {'form': form}
     )
 
 
+def _scoped_shipment(request, pk):
+    return get_object_or_404(
+        Shipment, pk=pk, importer__agent_company=request.agent_company
+    )
+
+
+def _scoped_container(shipment, container_id):
+    return get_object_or_404(Container, pk=container_id, shipment=shipment)
+
+
+def _updated_ago(updated_at, now):
+    if updated_at is None:
+        return 'Never updated'
+    seconds = max(0, int((now - updated_at).total_seconds()))
+    if seconds < 60:
+        return 'Updated just now'
+    minutes = seconds // 60
+    if minutes < 60:
+        unit = 'minute' if minutes == 1 else 'minutes'
+        return 'Updated %d %s ago' % (minutes, unit)
+    hours = minutes // 60
+    if hours < 24:
+        unit = 'hour' if hours == 1 else 'hours'
+        return 'Updated %d %s ago' % (hours, unit)
+    days = hours // 24
+    unit = 'day' if days == 1 else 'days'
+    return 'Updated %d %s ago' % (days, unit)
+
+
+def _log(request, shipment, container, action, old_value='', new_value=''):
+    AuditLog.objects.create(
+        shipment=shipment,
+        container=container,
+        user=request.user,
+        action=action,
+        old_value=old_value,
+        new_value=new_value,
+    )
+
+
+@agent_required
+@require_POST
+def stage_update(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    when = timezone.now()
+    note = request.POST.get('note', '').strip()
+    container_ids = request.POST.getlist('containers')
+    if not container_ids:
+        messages.error(request, 'Choose at least one container.')
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    for container_id in container_ids:
+        container = _scoped_container(shipment, container_id)
+        problems = stage_rules.check_can_complete(container, stage, when)
+        if problems:
+            messages.error(
+                request,
+                'Refused %s for %s: %s'
+                % (stage.label, container.number, ' '.join(problems)),
+            )
+            continue
+        with transaction.atomic():
+            event, created = StageEvent.objects.get_or_create(
+                container=container,
+                stage=stage,
+                defaults={'occurred_at': when, 'note': note},
+            )
+            old_value = '' if created else str(event.occurred_at)
+            event.occurred_at = when
+            event.skipped = False
+            event.note = note
+            event.save()
+            _log(
+                request,
+                shipment,
+                container,
+                'stage_completed',
+                old_value=old_value,
+                new_value=str(when),
+            )
+        messages.success(
+            request, 'Recorded %s for %s.' % (stage.label, container.number)
+        )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def stage_select(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    stage = get_object_or_404(
+        Stage, key=request.POST.get('stage_key'), is_optional=True
+    )
+    container_ids = request.POST.getlist('containers')
+    if not container_ids:
+        messages.error(request, 'Choose at least one container.')
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    for container_id in container_ids:
+        container = _scoped_container(shipment, container_id)
+        event, created = StageEvent.objects.get_or_create(
+            container=container, stage=stage
+        )
+        if created:
+            _log(request, shipment, container, 'stage_selected',
+                 new_value=stage.label)
+            messages.success(
+                request,
+                'Selected %s for %s.' % (stage.label, container.number),
+            )
+        elif event.occurred_at is not None and not event.skipped:
+            messages.error(
+                request,
+                '%s is already recorded for %s.'
+                % (stage.label, container.number),
+            )
+        else:
+            messages.error(
+                request,
+                '%s is already selected for %s.'
+                % (stage.label, container.number),
+            )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def stage_unselect(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    container = _scoped_container(shipment, request.POST.get('container'))
+    stage = get_object_or_404(
+        Stage, key=request.POST.get('stage_key'), is_optional=True
+    )
+    try:
+        event = StageEvent.objects.get(container=container, stage=stage)
+    except StageEvent.DoesNotExist:
+        event = None
+    if event is None or event.occurred_at is not None or event.skipped:
+        messages.error(
+            request,
+            'Only a pending selection of %s can be removed for %s.'
+            % (stage.label, container.number),
+        )
+    else:
+        event.delete()
+        _log(
+            request,
+            shipment,
+            container,
+            'stage_unselected',
+            old_value=stage.label,
+        )
+        messages.success(
+            request,
+            'Removed %s for %s.' % (stage.label, container.number),
+        )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def stage_undo(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    container = _scoped_container(shipment, request.POST.get('container'))
+    stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    problems = stage_rules.check_can_undo(container, stage)
+    if problems:
+        dependents = stage_rules._completed_dependents(container, stage)
+        if dependents:
+            first = sorted(
+                dependents, key=lambda pair: pair[1].occurred_at
+            )[0][0].label
+            hint = 'Undo %s first.' % first
+        else:
+            hint = ' '.join(problems)
+        messages.error(
+            request,
+            'Cannot undo %s for %s. %s'
+            % (stage.label, container.number, hint),
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    event = StageEvent.objects.get(container=container, stage=stage)
+    old_value = str(event.occurred_at)
+    event.delete()
+    _log(
+        request,
+        shipment,
+        container,
+        'stage_undone',
+        old_value=old_value,
+    )
+    messages.success(
+        request, 'Undid %s for %s.' % (stage.label, container.number)
+    )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def waiting_update(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    container = _scoped_container(shipment, request.POST.get('container'))
+    waiting_on = request.POST.get('waiting_on', '')
+    note = request.POST.get('note', '').strip()
+    valid = [choice[0] for choice in Container.WaitingOn.choices]
+    if waiting_on not in valid:
+        messages.error(request, 'Choose who the container is waiting on.')
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    old_value = container.waiting_on
+    if waiting_on != old_value:
+        container.waiting_on = waiting_on
+        if waiting_on == Container.WaitingOn.NOBODY:
+            container.waiting_on_since = None
+            container.waiting_on_note = ''
+        else:
+            container.waiting_on_since = timezone.now()
+            container.waiting_on_note = note
+        container.save()
+        _log(
+            request,
+            shipment,
+            container,
+            'waiting_changed',
+            old_value=old_value,
+            new_value='%s — %s' % (waiting_on, note) if note else waiting_on,
+        )
+        messages.success(
+            request, 'Updated waiting status for %s.' % container.number
+        )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
 @agent_required
 @require_GET
 def shipment_detail(request, pk):
-    shipment = get_object_or_404(
-        Shipment, pk=pk, importer__agent_company=request.agent_company
-    )
+    shipment = _scoped_shipment(request, pk)
     containers = list(shipment.containers.order_by('number'))
-    entries = [
-        {'container': container, 'current_step': _current_label(container)}
-        for container in containers
-    ]
+    optional_stages = list(
+        Stage.objects.filter(is_optional=True).order_by('order')
+    )
+    stages_by_key = {stage.key: stage for stage in Stage.objects.all()}
+    now = timezone.now()
+    entries = []
+    optional_keys = [stage.key for stage in optional_stages]
+    for container in containers:
+        steps = timeline_helpers.build_timeline(container, now=now)
+        event_keys = set(
+            StageEvent.objects.filter(container=container).values_list(
+                'stage__key', flat=True
+            )
+        )
+        pending_keys = set(
+            StageEvent.objects.filter(
+                container=container, occurred_at__isnull=True, skipped=False
+            ).values_list('stage__key', flat=True)
+        )
+        actionable_keys = {
+            step['key']
+            for step in steps
+            if step['state'] in ('upcoming', 'processing')
+            and not stage_rules.check_can_complete(
+                container, stages_by_key[step['key']], now
+            )
+        }
+        latest_update = (
+            StageEvent.objects.filter(container=container)
+            .order_by('-updated_at')
+            .values_list('updated_at', flat=True)
+            .first()
+        )
+        entries.append(
+            {
+                'container': container,
+                'current_step': _current_label(container),
+                'steps': steps,
+                'pending_keys': pending_keys,
+                'actionable_keys': actionable_keys,
+                'updated_ago': _updated_ago(latest_update, now),
+                'addable_keys': [
+                    key for key in optional_keys if key not in event_keys
+                ],
+            }
+        )
     message = 'Track your shipment %s at %s with this code: %s' % (
         shipment.bl_number,
         request.build_absolute_uri('/'),
         shipment.importer.access_code,
     )
+    history = (
+        AuditLog.objects.filter(shipment=shipment)
+        .select_related('user', 'container')
+        .order_by('-created_at')[:20]
+    )
     return render(
         request,
         'tracking/agent_shipment_detail.html',
-        {'shipment': shipment, 'entries': entries, 'message': message},
+        {
+            'shipment': shipment,
+            'entries': entries,
+            'message': message,
+            'stages': Stage.objects.order_by('order'),
+            'optional_stages': optional_stages,
+            'optional_keys': [stage.key for stage in optional_stages],
+            'waiting_choices': Container.WaitingOn.choices,
+            'history': history,
+        },
     )
 
 
 @agent_required
 @require_GET
 def importer_list(request):
-    importers = Importer.objects.filter(
-        agent_company=request.agent_company
-    ).order_by('name')
-    return render(
-        request, 'tracking/agent_importers.html', {'importers': importers}
+    company = request.agent_company
+    importers = (
+        Importer.objects.filter(agent_company=company)
+        .annotate(shipment_count=Count('shipment'))
+        .order_by('name')
     )
+    new_importer = None
+    added = request.GET.get('added') or ''
+    if added.isdigit():
+        new_importer = Importer.objects.filter(
+            pk=int(added), agent_company=company
+        ).first()
+    return render(
+        request,
+        'tracking/agent_importers.html',
+        {
+            'importers': importers,
+            'new_importer': new_importer,
+            'site': request.build_absolute_uri('/'),
+        },
+    )
+
+
+@agent_required
+@require_POST
+def importer_add(request):
+    company = request.agent_company
+    name = (request.POST.get('name') or '').strip()
+    if not name:
+        messages.error(request, 'Enter an importer name.')
+    elif len(name) > 200:
+        messages.error(
+            request, 'Importer name must be 200 characters or fewer.'
+        )
+    elif Importer.objects.filter(
+        agent_company=company, name__iexact=name
+    ).exists():
+        messages.error(
+            request, 'An importer called %s already exists.' % name
+        )
+    else:
+        importer = Importer.objects.create(
+            agent_company=company, name=name, access_code=_random_code()
+        )
+        return redirect(
+            '%s?added=%d' % (reverse('agent_importers'), importer.pk)
+        )
+    return redirect('agent_importers')
 
 
 @agent_required

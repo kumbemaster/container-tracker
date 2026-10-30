@@ -155,3 +155,18 @@ class StaffMember(models.Model):
 
     def __str__(self):
         return f'{self.user.username} ({self.agent_company})'
+
+
+class AuditLog(models.Model):
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE)
+    container = models.ForeignKey(
+        Container, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    action = models.CharField(max_length=100)
+    old_value = models.TextField(blank=True, default='')
+    new_value = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.action} by {self.user.username}'

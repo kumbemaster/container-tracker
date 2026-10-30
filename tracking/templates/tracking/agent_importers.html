@@ -5,11 +5,32 @@
 {% block content %}
 <main class="wrap">
 <div class="card">
+<h2>Add importer</h2>
+{% if messages %}
+{% for agent_message in messages %}
+<p class="error">{{ agent_message }}</p>
+{% endfor %}
+{% endif %}
+<form method="post" action="{% url 'agent_importer_add' %}">
+{% csrf_token %}
+<p><label for="id-name">Importer name</label>
+<input id="id-name" type="text" name="name" maxlength="200" required></p>
+<button type="submit">Add importer</button>
+</form>
+</div>
+{% if new_importer %}
+<div class="card">
+<p class="success">Added importer {{ new_importer.name }} with code <span class="mono">{{ new_importer.access_code }}</span>.</p>
+<p id="ready-msg">Your tracking code for {{ site }} is {{ new_importer.access_code }}.</p>
+<p><button type="button" id="ready-copy-btn" class="small-btn">Copy</button></p>
+</div>
+{% endif %}
+<div class="card">
 <h1>Importers</h1>
 {% if importers %}
 <table class="agent-table">
 <thead>
-<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th></th></tr>
+<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th>Shipments</th><th></th><th></th></tr>
 </thead>
 <tbody>
 {% for importer in importers %}
@@ -18,6 +39,8 @@
 <td class="mono">{{ importer.access_code }}</td>
 <td>{% if importer.access_active %}yes{% else %}no{% endif %}</td>
 <td>{% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y, H:i" }}{% else %}—{% endif %}</td>
+<td>{{ importer.shipment_count }}</td>
+<td><a href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a></td>
 <td>
 <form method="post" action="{% url 'agent_importer_rotate' pk=importer.pk %}">
 {% csrf_token %}
@@ -33,4 +56,13 @@
 {% endif %}
 </div>
 </main>
+<script>
+(function () {
+  var btn = document.getElementById('ready-copy-btn');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    navigator.clipboard.writeText(document.getElementById('ready-msg').textContent);
+  });
+})();
+</script>
 {% endblock %}

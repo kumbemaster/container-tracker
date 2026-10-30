@@ -5,6 +5,12 @@ from django import forms
 from .models import Importer
 from .validators import is_valid_container_number
 
+CONTAINER_SIZES = ['20ft', '40ft', '40HC']
+
+
+def normalise_number(raw):
+    return re.sub(r'[\s-]', '', raw or '').upper()
+
 
 class ShipmentForm(forms.Form):
     importer = forms.ModelChoiceField(
@@ -17,22 +23,12 @@ class ShipmentForm(forms.Form):
         required=False,
         help_text='Or type a new importer name instead of choosing above.',
     )
-    bl_number = forms.CharField(max_length=100)
-    shipping_line = forms.CharField(max_length=200)
+    bl_number = forms.CharField(
+        max_length=100, help_text='As written on the bill of lading'
+    )
+    shipping_line = forms.CharField(max_length=200, required=False)
     port = forms.CharField(max_length=200, initial='Onne')
-    destination_area = forms.CharField(max_length=200)
-    discharge_date = forms.DateField(
-        required=False, widget=forms.DateInput(attrs={'type': 'date'})
-    )
-    containers = forms.CharField(
-        widget=forms.Textarea(attrs={'rows': 4}),
-        help_text='One container per line as "number size".',
-    )
-    shipping_line_free_days = forms.IntegerField(
-        min_value=0, required=False
-    )
-    terminal_free_days = forms.IntegerField(min_value=0, required=False)
-    return_window_days = forms.IntegerField(min_value=0, initial=14)
+    destination_area = forms.CharField(max_length=200, label='Destination')
 
     def __init__(self, company, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -40,6 +36,7 @@ class ShipmentForm(forms.Form):
             agent_company=company
         ).order_by('name')
         self.company = company
+        self.rows = self._rows_from_data() if self.is_bound else [self._blank_row()]
 
     def clean(self):
         cleaned = super().clean()
@@ -49,59 +46,88 @@ class ShipmentForm(forms.Form):
             raise forms.ValidationError(
                 'Choose an importer or type a new importer name.'
             )
+        self.rows = self._validate_rows()
         return cleaned
 
-    def clean_containers(self):
-        raw = self.cleaned_data['containers']
-        parsed = []
+    def clean_bl_number(self):
+        return (self.cleaned_data['bl_number'] or '').strip().upper()
+
+    def _blank_row(self):
+        return {'number': '', 'size': '', 'errors': []}
+
+    def _rows_from_data(self):
+        numbers = self.data.getlist('c_number')
+        sizes = self.data.getlist('c_size')
+        count = max(len(numbers), len(sizes), 1)
+        rows = []
+        for index in range(count):
+            rows.append(
+                {
+                    'number': numbers[index] if index < len(numbers) else '',
+                    'size': sizes[index] if index < len(sizes) else '',
+                    'errors': [],
+                }
+            )
+        return rows
+
+    def _validate_rows(self):
+        rows = self._rows_from_data()
+        filled = [
+            row
+            for row in rows
+            if (row['number'] or '').strip() or (row['size'] or '').strip()
+        ]
+        if not filled:
+            for row in rows:
+                row['errors'].append('Add at least one container.')
+            self.rows = rows
+            raise forms.ValidationError('Add at least one container.')
         seen = set()
-        errors = []
-        for lineno, line in enumerate(raw.splitlines(), start=1):
-            line = line.strip()
-            if not line:
+        failed = False
+        for row in filled:
+            number = normalise_number(row['number'])
+            size = (row['size'] or '').strip()
+            row['number'] = row['number'] or ''
+            if not number:
+                row['errors'].append('Enter a container number.')
+                failed = True
                 continue
-            parts = line.split(None, 1)
-            if len(parts) != 2 or not parts[1].strip():
-                errors.append(
-                    'Line %d: write each container as "number size".' % lineno
-                )
-                continue
-            number = parts[0].strip().upper()
-            size = parts[1].strip()
             if not is_valid_container_number(number):
-                errors.append(
-                    'Line %d: %s is not a valid container number.'
-                    % (lineno, number)
+                row['errors'].append(
+                    '%s is not a valid container number.' % number
                 )
+                failed = True
                 continue
             if number in seen:
-                errors.append(
-                    'Line %d: duplicate container number %s.' % (lineno, number)
+                row['errors'].append(
+                    'Duplicate container number %s.' % number
                 )
+                failed = True
                 continue
             seen.add(number)
-            parsed.append((number, size))
-        if errors:
-            raise forms.ValidationError(errors)
-        if not parsed:
-            raise forms.ValidationError('Add at least one container.')
-        return parsed
+            if size not in CONTAINER_SIZES:
+                row['errors'].append('Choose a size.')
+                failed = True
+                continue
+            row['number'] = number
+            row['size'] = size
+        if failed:
+            self.rows = rows
+            raise forms.ValidationError(
+                'Fix the container rows below.'
+            )
+        return [
+            {'number': row['number'], 'size': row['size'], 'errors': []}
+            for row in filled
+        ]
 
     def container_rows(self):
-        return self.cleaned_data['containers']
+        return [
+            (row['number'], row['size']) for row in self.rows
+        ]
 
     def importer_name(self):
         importer = self.cleaned_data.get('importer')
         if importer is not None:
             return None
         return (self.cleaned_data.get('new_importer_name') or '').strip()
-
-    def free_days(self):
-        data = self.cleaned_data
-        return {
-            'shipping_line_free_days': data.get('shipping_line_free_days'),
-            'terminal_free_days': data.get('terminal_free_days'),
-            'return_window_days': data.get('return_window_days')
-            if data.get('return_window_days') is not None
-            else 14,
-        }

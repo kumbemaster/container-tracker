@@ -34,9 +34,39 @@ urlpatterns = [
         name='agent_shipment_detail',
     ),
     path(
+        'agent/shipments/<int:pk>/stages/update/',
+        agent_views.stage_update,
+        name='agent_stage_update',
+    ),
+    path(
+        'agent/shipments/<int:pk>/stages/select/',
+        agent_views.stage_select,
+        name='agent_stage_select',
+    ),
+    path(
+        'agent/shipments/<int:pk>/stages/unselect/',
+        agent_views.stage_unselect,
+        name='agent_stage_unselect',
+    ),
+    path(
+        'agent/shipments/<int:pk>/stages/undo/',
+        agent_views.stage_undo,
+        name='agent_stage_undo',
+    ),
+    path(
+        'agent/shipments/<int:pk>/waiting/',
+        agent_views.waiting_update,
+        name='agent_waiting_update',
+    ),
+    path(
         'agent/importers/',
         agent_views.importer_list,
         name='agent_importers',
+    ),
+    path(
+        'agent/importers/add/',
+        agent_views.importer_add,
+        name='agent_importer_add',
     ),
     path(
         'agent/importers/<int:pk>/rotate/',

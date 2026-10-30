@@ -4,32 +4,192 @@
 
 {% block content %}
 <main class="wrap">
-<div class="card">
+<div class="card compact">
 <h1 class="mono">{{ shipment.bl_number }}</h1>
-<dl class="summary">
-<div><dt>Importer</dt><dd>{{ shipment.importer.name }}</dd></div>
-<div><dt>Shipping line</dt><dd>{{ shipment.shipping_line }}</dd></div>
-<div><dt>Port</dt><dd>{{ shipment.port }}</dd></div>
-<div><dt>Destination</dt><dd>{{ shipment.destination_area }}</dd></div>
-<div><dt>Access code</dt><dd class="mono">{{ shipment.importer.access_code }}</dd></div>
-</dl>
+<p class="imp-line">{{ shipment.importer.name }}</p>
+<p>Access code: <span class="mono" id="copy-code">{{ shipment.importer.access_code }}</span>
+<button type="button" id="copy-code-btn" class="small-btn">Copy code</button></p>
 <p id="copy-msg">{{ message }}</p>
-<p><button type="button" id="copy-btn">Copy</button></p>
+<p><button type="button" id="copy-msg-btn" class="small-btn">Copy message</button></p>
 </div>
 <div class="card">
-<h2>Containers</h2>
-<ul>
+<h2>Update stage</h2>
+<form method="post" action="{% url 'agent_stage_update' pk=shipment.pk %}">
+{% csrf_token %}
+<div class="ubar">
+<p><label for="id-stage">Stage</label>
+<select id="id-stage" name="stage_key">
+{% for stage in stages %}
+<option value="{{ stage.key }}">{{ stage.label }}</option>
+{% endfor %}
+</select></p>
+<div class="picker-wrap">
+<span class="picker-label" id="picker-label">Containers</span>
+<details class="picker" id="container-picker">
+<summary><span class="picker-summary" id="picker-summary">All containers ({{ entries|length }})</span>
+<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="picker-panel">
+<p><label><input type="checkbox" id="picker-all" checked> Select all containers</label></p>
 {% for entry in entries %}
-<li><span class="mono">{{ entry.container.number }}</span> ({{ entry.container.size }}) — {{ entry.current_step }}</li>
+<p><label><input type="checkbox" name="containers" value="{{ entry.container.pk }}" checked data-num="{{ entry.container.number }}"> <span class="mono">{{ entry.container.number }}</span> ({{ entry.container.size }})</label></p>
+{% endfor %}
+</div>
+</details>
+</div>
+<p><label for="id-note">Note</label>
+<input id="id-note" type="text" name="note"></p>
+<p><button type="submit">Mark done</button></p>
+</div>
+</form>
+{% if messages %}
+{% for production_message in messages %}
+<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+{% endfor %}
+{% endif %}
+</div>
+{% for entry in entries %}
+<details class="row abox"{% if entries|length == 1 %} open{% endif %}>
+<summary>
+<span class="abox-main">
+<span class="mono abox-number">{{ entry.container.number }}</span>
+<span class="abox-size">{{ entry.container.size }}</span>
+</span>
+<span class="abox-state">
+<span class="mini-label">Current state</span>
+<span class="cur">{% if entry.current_step == 'Not started' %}<span class="not-started">Not started</span>{% else %}<svg class="dot dot-ok" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="currentColor"/></svg>{{ entry.current_step }}{% endif %}</span>
+</span>
+<span class="abox-sub">{% if entry.container.waiting_on != 'nobody' %}Waiting on {{ entry.container.get_waiting_on_display }}{% else %}{{ entry.updated_ago }}{% endif %}</span>
+<span class="chev-ring"><svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+</summary>
+<div class="panel">
+<form class="inline-form" method="post" action="{% url 'agent_waiting_update' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="container" value="{{ entry.container.pk }}">
+<label class="visually-hidden" for="waiting-{{ entry.container.pk }}">Waiting on</label>
+<select id="waiting-{{ entry.container.pk }}" name="waiting_on">
+{% for value, label in waiting_choices %}
+<option value="{{ value }}"{% if entry.container.waiting_on == value %} selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</select>
+<label class="visually-hidden" for="waiting-note-{{ entry.container.pk }}">Note</label>
+<input id="waiting-note-{{ entry.container.pk }}" type="text" name="note" value="{{ entry.container.waiting_on_note }}" placeholder="Note">
+<button type="submit" class="small-btn">Save</button>
+</form>
+<div class="tiles">
+{% for step in entry.steps %}
+<div class="tile tile-{{ step.state }}">
+<span class="tile-icon">{% include "tracking/_stage_icon.html" with step_key=step.key %}</span>
+<p class="tile-label">{{ step.label }}</p>
+{% if step.state == 'completed' or step.state == 'current' %}
+<p class="tile-time"><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time></p>
+<p class="tile-check"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Completed{% if step.state == 'current' %}<span class="visually-hidden">, current step</span>{% endif %}</p>
+<details class="tile-menu">
+<summary>Actions</summary>
+<button type="button" class="small-btn" disabled>Done</button>
+<form method="post" action="{% url 'agent_stage_undo' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="container" value="{{ entry.container.pk }}">
+<input type="hidden" name="stage_key" value="{{ step.key }}">
+<button type="submit" class="small-btn">Undo</button>
+</form>
+</details>
+{% elif step.key in entry.pending_keys %}
+<p class="tile-prog">Selected, pending</p>
+<details class="tile-menu">
+<summary>Actions</summary>
+{% if step.key in entry.actionable_keys %}
+<form method="post" action="{% url 'agent_stage_update' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="stage_key" value="{{ step.key }}">
+<input type="hidden" name="containers" value="{{ entry.container.pk }}">
+<button type="submit" class="small-btn">Done</button>
+</form>
+{% else %}
+<button type="button" class="small-btn" disabled>Done</button>
+{% endif %}
+<form method="post" action="{% url 'agent_stage_unselect' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="container" value="{{ entry.container.pk }}">
+<input type="hidden" name="stage_key" value="{{ step.key }}">
+<button type="submit" class="small-btn">Undo</button>
+</form>
+</details>
+{% elif step.key in entry.actionable_keys %}
+{% if step.state == 'processing' %}<p class="tile-prog">In progress</p>
+{% endif %}
+<details class="tile-menu">
+<summary>Actions</summary>
+<form method="post" action="{% url 'agent_stage_update' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="stage_key" value="{{ step.key }}">
+<input type="hidden" name="containers" value="{{ entry.container.pk }}">
+<button type="submit" class="small-btn">Done</button>
+</form>
+<button type="button" class="small-btn" disabled>Undo</button>
+</details>
+{% endif %}
+</div>
+{% endfor %}
+{% for stage in optional_stages %}
+{% if stage.key in entry.addable_keys %}
+<div class="tile tile-add">
+<span class="tile-icon">{% include "tracking/_stage_icon.html" with step_key=stage.key %}</span>
+<p class="tile-label">{{ stage.label }}</p>
+<form method="post" action="{% url 'agent_stage_select' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="stage_key" value="{{ stage.key }}">
+<input type="hidden" name="containers" value="{{ entry.container.pk }}">
+<button type="submit" class="small-btn">Add</button>
+</form>
+</div>
+{% endif %}
+{% endfor %}
+</div>
+</div>
+</details>
+{% endfor %}
+<details class="fold">
+<summary><span>History</span>
+<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<ul>
+{% for record in history %}
+<li>{{ record.action }} — {% if record.container %}<span class="mono">{{ record.container.number }}</span> — {% endif %}{% if record.old_value %}{{ record.old_value }} → {% endif %}{{ record.new_value }} ({{ record.user.username }}, {{ record.created_at|date:"j M Y, H:i" }})</li>
 {% empty %}
-<li>No containers yet.</li>
+<li>No changes yet.</li>
 {% endfor %}
 </ul>
-</div>
+</details>
 </main>
 <script>
-document.getElementById('copy-btn').addEventListener('click', function () {
-  navigator.clipboard.writeText(document.getElementById('copy-msg').textContent);
+document.querySelectorAll('[id^="copy-"][id$="-btn"]').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var target = document.getElementById(btn.id.replace(/-btn$/, ''));
+    if (target) navigator.clipboard.writeText(target.textContent);
+  });
 });
+(function () {
+  var picker = document.getElementById('container-picker');
+  if (!picker) return;
+  var all = document.getElementById('picker-all');
+  var boxes = Array.prototype.slice.call(picker.querySelectorAll('input[name="containers"]'));
+  var summary = document.getElementById('picker-summary');
+  function refresh() {
+    var checked = boxes.filter(function (b) { return b.checked; });
+    all.checked = boxes.length > 0 && checked.length === boxes.length;
+    if (checked.length === 0) summary.textContent = 'Select containers';
+    else if (checked.length === boxes.length) summary.textContent = 'All containers (' + boxes.length + ')';
+    else if (checked.length <= 2) summary.textContent = checked.map(function (b) { return b.dataset.num; }).join(', ');
+    else summary.textContent = checked.length + ' selected';
+  }
+  all.addEventListener('change', function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  document.addEventListener('click', function (e) {
+    if (picker.open && !picker.contains(e.target)) picker.removeAttribute('open');
+  });
+  refresh();
+})();
 </script>
 {% endblock %}
