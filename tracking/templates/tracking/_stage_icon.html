@@ -1,0 +1,25 @@
+<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if step_key == 'arrived_at_port' %}
+<path d="M4 16h16l-2 4H6z"/><path d="M12 4v12"/><path d="M12 6c3.5 1 5.5 3 6 6h-6"/>
+{% elif step_key == 'manifest_available' or step_key == 'paar_assessed' %}
+<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h6"/>
+{% elif step_key == 'duty_paid' %}
+<ellipse cx="12" cy="6" rx="6.5" ry="3"/><path d="M5.5 6v12c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3V6"/><path d="M5.5 12c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3"/>
+{% elif step_key == 'terminal_processed' or step_key == 'en_route_to_bonded_terminal' %}
+<path d="M5 21V4h14v17"/><path d="M9 8h2M13 8h2M9 12h2M13 12h2"/><path d="M10 21v-3h4v3"/>
+{% elif step_key == 'shipping_line_processed' %}
+<path d="M3 16h12l-1.8 3.5H4.8z"/><path d="M14 4h6v6l-6 6-4.5-4.5z"/><circle cx="16.5" cy="8.5" r="1"/>
+{% elif step_key == 'customs_examination' or step_key == 'customs_processed' %}
+<path d="M12 3l7 2.8v5.7c0 4.4-2.9 7.3-7 9.5-4.1-2.2-7-5.1-7-9.5V5.8z"/>
+{% elif step_key == 'gate_out' %}
+<path d="M4 21V7M20 21V7"/><path d="M4 10.5h10M11.5 8l2.5 2.5-2.5 2.5"/>
+{% elif step_key == 'in_transit' %}
+<path d="M2 6h12v10H2z"/><path d="M14 10h3.5L21 13.5V16h-7"/><circle cx="6.5" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>
+{% elif step_key == 'delivered' %}
+<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M8.5 12.5l2.5 2.5 4.5-4.5"/>
+{% elif step_key == 'empty_container_returned' %}
+<path d="M9 7l3-3 3 3"/><rect x="3" y="9" width="18" height="11"/><path d="M7.5 9v11M12 9v11M16.5 9v11"/>
+{% else %}
+<circle cx="12" cy="12" r="5"/>
+{% endif %}
+</svg>

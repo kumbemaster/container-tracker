@@ -9,6 +9,11 @@
 <link rel="stylesheet" href="{% static 'tracking/style.css' %}">
 </head>
 <body>
+<header class="sitebar">
+<a class="wordmark" href="{% url 'search' %}">Container Tracker</a>
+{% block topsearch %}{% endblock %}
+<nav class="sitenav">{% block nav %}{% endblock %}</nav>
+</header>
 {% block content %}{% endblock %}
 </body>
 </html>

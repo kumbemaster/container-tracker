@@ -2,10 +2,9 @@
 
 {% block title %}Track your container{% endblock %}
 
+{% block nav %}<a class="login-link" href="{% url 'agent_login' %}">Agent login</a>{% endblock %}
+
 {% block content %}
-<header class="topbar">
-<a class="login-link" href="{% url 'agent_login' %}">Agent login</a>
-</header>
 <main class="wrap">
 <div class="card">
 <h1>Track your container</h1>

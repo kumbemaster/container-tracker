@@ -74,6 +74,49 @@ def build_timeline(container, now=None):
     return steps
 
 
+PHASE_ORDER = ['arrival', 'release', 'delivery', 'return']
+
+
+def build_timeline_groups(container, now=None):
+    steps = build_timeline(container, now=now)
+    phases = dict(Stage.objects.values_list('key', 'phase'))
+    shipment = container.shipment
+    specs = [
+        ('arrival', shipment.port.upper(), 'Arrival and documents'),
+        ('release', shipment.port.upper(), 'Processing and release'),
+        (
+            'delivery',
+            shipment.destination_area.upper(),
+            'Inland delivery',
+        ),
+        ('return', 'EMPTY RETURN', 'Return to terminal'),
+    ]
+    groups = []
+    for phase, heading, subtitle in specs:
+        group_steps = [
+            step for step in steps if phases.get(step['key']) == phase
+        ]
+        if not group_steps:
+            continue
+        groups.append(
+            {
+                'phase': phase,
+                'heading': heading,
+                'subtitle': subtitle,
+                'steps': group_steps,
+                'completed_count': sum(
+                    1
+                    for step in group_steps
+                    if step['state'] in ('completed', 'current')
+                ),
+                'is_current_group': any(
+                    step['state'] == 'current' for step in group_steps
+                ),
+            }
+        )
+    return groups
+
+
 def freshness(container, now=None):
     moment = _moment(now)
     latest = (

@@ -2,7 +2,7 @@ import hashlib
 from datetime import date, datetime, timedelta
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from . import access as access_helpers
@@ -414,7 +414,7 @@ class ClockTests(TestCase):
 
 
 class TimelineClockViewTests(TestCase):
-    def test_timeline_shows_both_free_time_labels(self):
+    def _verify_clock_container(self):
         company = AgentCompany.objects.create(name='Timeline Clock Co')
         importer = Importer.objects.create(
             agent_company=company,
@@ -438,7 +438,17 @@ class TimelineClockViewTests(TestCase):
             '/track/verify/', {'q': 'TIMECLOCK01', 'code': '222222'}
         )
         self.assertEqual(verify.status_code, 302)
-        timeline = self.client.get(verify['Location'])
+        return self.client.get(verify['Location'])
+
+    def test_free_time_labels_hidden_by_default(self):
+        timeline = self._verify_clock_container()
+        self.assertEqual(timeline.status_code, 200)
+        self.assertNotContains(timeline, 'Terminal free time')
+        self.assertNotContains(timeline, 'Shipping line free time')
+
+    @override_settings(SHOW_FREE_TIME_CLOCKS=True)
+    def test_free_time_labels_shown_when_flag_on(self):
+        timeline = self._verify_clock_container()
         self.assertEqual(timeline.status_code, 200)
         self.assertContains(timeline, 'Terminal free time')
         self.assertContains(timeline, 'Shipping line free time')
@@ -455,11 +465,11 @@ class DemoTimelineViewTests(TestCase):
         response = self.client.get('/s/CSQU3054383/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'CSQU3054383')
-        self.assertContains(response, 'DEMOBL001')
+        self.assertNotContains(response, 'DEMOBL001')
         self.assertContains(response, 'Shipping line processed')
         self.assertContains(response, 'Current')
-        self.assertContains(response, 'Terminal free time')
-        self.assertContains(response, 'Shipping line free time')
+        self.assertNotContains(response, 'Terminal free time')
+        self.assertNotContains(response, 'Shipping line free time')
 
     def test_demo_container2_waiting_line(self):
         response = self.client.get('/s/DEMO4416733/')
@@ -472,8 +482,7 @@ class DemoTimelineViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'CSQU3054383')
         self.assertContains(response, 'DEMO4416733')
-        self.assertContains(response, '/s/CSQU3054383/')
-        self.assertContains(response, '/s/DEMO4416733/')
+        self.assertNotContains(response, 'View timeline')
 
     def test_no_demo_names_on_pages(self):
         for url in (
@@ -603,3 +612,211 @@ class ContainerTimelineTests(TestCase):
             hold['pending_processing'],
             ['Terminal processed', 'Customs processed'],
         )
+
+
+class ResultsPagesTests(TestCase):
+    def setUp(self):
+        call_command('seed_demo')
+        self.client.post(
+            '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
+        )
+
+    def test_bl_page_has_two_details_and_no_timeline_links(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, 'DEMOBL001')
+        self.assertContains(response, 'CSQU3054383')
+        self.assertContains(response, 'DEMO4416733')
+        self.assertContains(response, 'Shipping line processed')
+        self.assertContains(response, 'Manifest available')
+        self.assertEqual(html.count('<details class="row"'), 2)
+        self.assertNotContains(response, 'View timeline')
+
+    def test_container_page_hides_bl_number(self):
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'DEMOBL001')
+
+    def test_no_demo_names_on_result_pages(self):
+        for url in ('/s/DEMOBL001/', '/s/CSQU3054383/', '/s/DEMO4416733/'):
+            page = self.client.get(url)
+            self.assertEqual(page.status_code, 200)
+            self.assertNotContains(page, 'Demo Importer A')
+            self.assertNotContains(page, 'Demo Clearing Ltd')
+
+    def test_top_bar_form_on_result_pages(self):
+        for url in ('/s/DEMOBL001/', '/s/CSQU3054383/'):
+            page = self.client.get(url)
+            self.assertEqual(page.status_code, 200)
+            html = page.content.decode()
+            self.assertContains(page, '<form class="topsearch"')
+            self.assertContains(page, 'action="/track/"')
+            self.assertContains(page, 'id-top-q')
+            self.assertContains(page, 'placeholder="Container or BL number"')
+            self.assertContains(page, 'csrfmiddlewaretoken')
+            self.assertNotContains(page, 'Track another shipment')
+            self.assertNotIn('value="DEMOBL001"', html)
+            self.assertNotIn('value="CSQU3054383"', html)
+
+    def test_container_box_open_by_default(self):
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertEqual(html.count('<details class="row"'), 1)
+        self.assertIn('<details class="row" open>', html)
+
+    def test_bl_two_containers_both_closed(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertEqual(html.count('<details class="row"'), 2)
+        self.assertNotIn('<details class="row" open>', html)
+
+    def test_collapsed_rows_have_no_free_time_text(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'free time')
+        self.assertNotContains(response, 'Free time')
+
+    def test_bl_page_header_and_rows(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, 'DEMOBL001')
+        self.assertContains(response, 'Onne')
+        self.assertContains(response, 'Port Harcourt')
+        self.assertEqual(html.count('<details class="row"'), 2)
+
+    def test_collapsed_box_contents(self):
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        for number, size in (('CSQU3054383', '40ft'), ('DEMO4416733', '20ft')):
+            self.assertContains(response, number)
+            self.assertContains(response, size)
+        self.assertContains(response, 'Arrived')
+        self.assertContains(response, 'Current state')
+        self.assertContains(response, 'Shipping line processed')
+        self.assertContains(response, 'Manifest available')
+
+
+class TimelineGroupTests(TestCase):
+    def setUp(self):
+        call_command('seed_demo')
+        self.container1 = Container.objects.get(number='CSQU3054383')
+
+    def test_demo_groups_in_phase_order(self):
+        groups = timeline_helpers.build_timeline_groups(self.container1)
+        self.assertEqual(
+            [group['phase'] for group in groups],
+            ['arrival', 'release', 'delivery', 'return'],
+        )
+        self.assertEqual(
+            [group['heading'] for group in groups],
+            ['ONNE', 'ONNE', 'PORT HARCOURT', 'EMPTY RETURN'],
+        )
+        arrival = groups[0]
+        self.assertEqual(arrival['subtitle'], 'Arrival and documents')
+        self.assertEqual(arrival['completed_count'], 4)
+        self.assertFalse(arrival['is_current_group'])
+        release = groups[1]
+        self.assertTrue(release['is_current_group'])
+
+    def test_demo_flat_timeline(self):
+        self.client.post(
+            '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
+        )
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Shipping line processed')
+        self.assertContains(response, 'Completed')
+        self.assertContains(response, 'In progress')
+        self.assertNotContains(response, 'Upcoming')
+        self.assertNotContains(response, 'tag-current')
+        self.assertNotContains(response, 'Arrival and documents')
+        self.assertNotContains(response, 'steps completed')
+        self.assertRegex(
+            response.content.decode(), r'\d{1,2} \w{3} \d{4}, \d{2}:\d{2}'
+        )
+
+    def test_small_timeline_is_flat(self):
+        company = AgentCompany.objects.create(name='Fold Co')
+        importer = Importer.objects.create(
+            agent_company=company, name='Fold Importer', access_code='444444'
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='FOLDBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        container = Container.objects.create(
+            shipment=shipment, number='FOLD0000001', size='40ft'
+        )
+        now = timezone.now()
+        for key, days_ago in [
+            ('arrived_at_port', 3),
+            ('manifest_available', 2),
+            ('shipping_line_processed', 1),
+        ]:
+            StageEvent.objects.create(
+                container=container,
+                stage=Stage.objects.get(key=key),
+                occurred_at=now - timedelta(days=days_ago),
+            )
+        self.client.post(
+            '/track/verify/', {'q': 'FOLD0000001', 'code': '444444'}
+        )
+        response = self.client.get('/s/FOLD0000001/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Arrived at port')
+        self.assertContains(response, 'Completed')
+        self.assertNotContains(response, 'steps completed')
+        self.assertNotContains(response, 'Arrival and documents')
+
+    def test_bl_single_container_box_open(self):
+        company = AgentCompany.objects.create(name='Solo Co')
+        importer = Importer.objects.create(
+            agent_company=company, name='Solo Importer', access_code='555555'
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='SOLOBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        Container.objects.create(
+            shipment=shipment, number='SOLO0000001', size='20ft'
+        )
+        self.client.post(
+            '/track/verify/', {'q': 'SOLOBL001', 'code': '555555'}
+        )
+        response = self.client.get('/s/SOLOBL001/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertEqual(html.count('<details class="row"'), 1)
+        self.assertIn('<details class="row" open>', html)
+
+    def test_bl_page_has_one_row_per_container(self):
+        self.client.post(
+            '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
+        )
+        response = self.client.get('/s/DEMOBL001/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, 'DEMOBL001')
+        self.assertEqual(html.count('<details class="row"'), 2)
+
+    def test_clocks_stay_hidden(self):
+        self.client.post(
+            '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
+        )
+        for url in ('/s/DEMOBL001/', '/s/CSQU3054383/'):
+            page = self.client.get(url)
+            self.assertEqual(page.status_code, 200)
+            self.assertNotContains(page, 'Terminal free time')
+            self.assertNotContains(page, 'Shipping line free time')
+            self.assertNotContains(page, 'Return the empty container')
+            self.assertNotContains(page, 'return window')

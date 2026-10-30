@@ -1,0 +1,22 @@
+<p class="fresh-line">{{ age_display }}{% if hold.waiting_on != 'nobody' %} &middot; Waiting on {{ hold.waiting_on_label }}{% endif %}</p>
+{% for clock in clocks %}
+{% include "tracking/_clock.html" with clock=clock %}
+{% endfor %}
+<ol class="tl">
+{% for step in steps %}
+<li class="tl-{{ step.state }}">
+<span class="tl-dot tl-dot-{{ step.state }}">{% include "tracking/_stage_icon.html" with step_key=step.key %}</span>
+<div class="tl-body">
+<div class="tl-text">
+<strong>{{ step.label }}</strong>{% if step.state == 'current' %}<span class="visually-hidden">, current step</span>{% endif %}{% if step.state == 'upcoming' %}<span class="visually-hidden">, not yet reached</span>{% endif %}
+{% if step.state == 'completed' or step.state == 'current' %}
+<br><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time>
+<br><span class="st-word st-{{ step.state }}">Completed</span>
+{% elif step.state == 'processing' %}
+<br><span class="st-word st-processing">In progress</span>
+{% endif %}
+</div>
+</div>
+</li>
+{% endfor %}
+</ol>

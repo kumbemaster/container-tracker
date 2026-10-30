@@ -142,15 +142,45 @@ def _age_display(updated_at, now):
 def _container_context(container):
     now = timezone.now()
     fresh = timeline_helpers.freshness(container, now=now)
+    if settings.SHOW_FREE_TIME_CLOCKS:
+        clocks = build_clocks(container)
+    else:
+        clocks = [None, None, None]
+    steps = timeline_helpers.build_timeline(container, now=now)
+    arrived_at = next(
+        (
+            step['occurred_at']
+            for step in steps
+            if step['key'] == 'arrived_at_port'
+            and step['occurred_at'] is not None
+        ),
+        None,
+    )
     return {
         'container': container,
         'shipment': container.shipment,
-        'steps': timeline_helpers.build_timeline(container, now=now),
-        'clocks': build_clocks(container),
+        'steps': steps,
+        'clocks': clocks,
         'fresh': fresh,
         'age_display': _age_display(fresh['updated_at'], now),
         'hold': timeline_helpers.holding(container),
+        'arrived_on': (
+            timezone.localtime(arrived_at).date()
+            if arrived_at is not None
+            else None
+        ),
     }
+
+
+def _panel_context(container):
+    context = _container_context(container)
+    steps = context['steps']
+    current = next(
+        (step for step in steps if step['state'] == 'current'), None
+    )
+    context['current_label'] = current['label'] if current is not None else None
+    context['open'] = False
+    return context
 
 
 @require_GET
@@ -162,31 +192,24 @@ def timeline(request, ref):
     if session is None or not access_helpers.has_access(session, _owner_of(target)):
         return _private(redirect('/'))
     if isinstance(target, Container):
-        context = _container_context(target)
-        context['cards'] = None
+        context = _panel_context(target)
+        context['is_bl_page'] = False
         return _private(render(request, 'tracking/timeline.html', context))
     containers = list(target.containers.order_by('number'))
-    if len(containers) == 1:
-        context = _container_context(containers[0])
-        context['cards'] = None
-        return _private(render(request, 'tracking/timeline.html', context))
-    cards = []
-    for container in containers:
-        steps = timeline_helpers.build_timeline(container)
-        current = next(
-            (step for step in steps if step['state'] == 'current'), None
-        )
-        cards.append(
-            {
-                'number': container.number,
-                'size': container.size,
-                'current_step': current['label']
-                if current is not None
-                else 'Not started',
-            }
-        )
+    panels = [_panel_context(container) for container in containers]
+    if len(panels) == 1:
+        panels[0]['open'] = True
     return _private(
-        render(request, 'tracking/timeline.html', {'cards': cards})
+        render(
+            request,
+            'tracking/timeline.html',
+            {
+                'is_bl_page': True,
+                'shipment': target,
+                'container_count': len(panels),
+                'panels': panels,
+            },
+        )
     )
 
 

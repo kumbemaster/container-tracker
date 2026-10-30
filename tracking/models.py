@@ -72,12 +72,21 @@ class Container(models.Model):
 
 
 class Stage(models.Model):
+    class Phase(models.TextChoices):
+        ARRIVAL = 'arrival', 'Arrival'
+        RELEASE = 'release', 'Release'
+        DELIVERY = 'delivery', 'Delivery'
+        RETURN = 'return', 'Return'
+
     order = models.PositiveIntegerField(unique=True)
     key = models.SlugField(max_length=100, unique=True)
     label = models.CharField(max_length=200)
     is_optional = models.BooleanField(default=False)
     is_sequenced = models.BooleanField(default=True)
     is_processing_track = models.BooleanField(default=False)
+    phase = models.CharField(
+        max_length=20, choices=Phase.choices, default=Phase.ARRIVAL
+    )
 
     class Meta:
         ordering = ['order']

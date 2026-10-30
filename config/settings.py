@@ -121,6 +121,9 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Importer pages: show free-time and return-window clocks.
+SHOW_FREE_TIME_CLOCKS = False
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

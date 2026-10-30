@@ -1,61 +1,70 @@
 {% extends "tracking/base.html" %}
 
-{% block title %}Shipment timeline{% endblock %}
+{% block title %}{% if is_bl_page %}Shipment {{ shipment.bl_number }}{% else %}Container {{ container.number }}{% endif %}{% endblock %}
+
+{% block topsearch %}
+<form class="topsearch" method="post" action="{% url 'track' %}">
+{% csrf_token %}
+<label class="visually-hidden" for="id-top-q">Container or BL number</label>
+<input id="id-top-q" type="text" name="q" placeholder="Container or BL number" autocomplete="off" required>
+<button type="submit">Track</button>
+</form>
+{% endblock %}
 
 {% block content %}
 <main class="wrap">
-{% if cards %}
-<h1>Containers on this shipment</h1>
-{% for card in cards %}
-<div class="card">
-<p><strong>Container: {{ card.number }}</strong> ({{ card.size }})</p>
-<p>Current step: {{ card.current_step }}</p>
-<p><a href="{% url 'timeline' ref=card.number %}">View timeline</a></p>
+{% if is_bl_page %}
+<p class="head-label">Bill of lading</p>
+<h1 class="mono">{{ shipment.bl_number }}</h1>
+<p class="route">{{ shipment.port }} &rarr; {{ shipment.destination_area }}</p>
+{% for panel in panels %}
+<details class="row"{% if panel.open %} open{% endif %}>
+<summary>
+<span class="cell">
+<span class="mono row-number">{{ panel.container.number }}</span>
+<span class="sub">{{ panel.container.size }}</span>
+</span>
+<span class="cell">
+<span class="row-place">{{ panel.shipment.port }}</span>
+<span class="sub">{% if panel.arrived_on %}Arrived {{ panel.arrived_on|date:"j M Y" }}{% elif panel.shipment.discharge_date %}Discharged {{ panel.shipment.discharge_date|date:"j M Y" }}{% else %}Awaiting arrival{% endif %}</span>
+</span>
+<span class="cell">
+<span class="row-place">{{ panel.shipment.destination_area }}</span>
+<span class="mini-label">Current state</span>
+<span class="cur">{% if panel.current_label %}<svg class="dot dot-ok" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="currentColor"/></svg>{{ panel.current_label }}{% else %}<span class="not-started">Not started</span>{% endif %}</span>
+</span>
+<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</summary>
+<div class="panel">
+{% include "tracking/_panel.html" with steps=panel.steps clocks=panel.clocks age_display=panel.age_display hold=panel.hold %}
 </div>
+</details>
 {% endfor %}
-<p><a href="{% url 'search' %}">Back to search</a></p>
 {% else %}
-<div class="card">
-<h1>Container {{ container.number }}</h1>
-<dl class="summary">
-<div><dt>Size</dt><dd>{{ container.size }}</dd></div>
-<div><dt>Bill of lading</dt><dd>{{ shipment.bl_number }}</dd></div>
-<div><dt>Shipping line</dt><dd>{{ shipment.shipping_line }}</dd></div>
-<div><dt>Port</dt><dd>{{ shipment.port }}</dd></div>
-<div><dt>Destination</dt><dd>{{ shipment.destination_area }}</dd></div>
-</dl>
-<p class="freshness">{{ age_display }}</p>
-{% if fresh.stale %}
-<p class="stale">This information may be out of date.</p>
-{% endif %}
-{% for clock in clocks %}
-{% include "tracking/_clock.html" with clock=clock %}
-{% endfor %}
-{% if hold.waiting_on != 'nobody' %}
-<p class="waiting"><strong>Waiting on:</strong> {{ hold.waiting_on_label }}{% if hold.waiting_on_since %} since {{ hold.waiting_on_since|date:"j M Y, H:i" }}{% endif %}{% if hold.waiting_on_note %} &mdash; {{ hold.waiting_on_note }}{% endif %}</p>
-{% endif %}
-{% if hold.pending_processing %}
-<p class="held-at">Held at: {{ hold.pending_processing|join:", " }}</p>
-{% endif %}
+<p class="head-label">Container number</p>
+<h1 class="mono">{{ container.number }}</h1>
+<p class="route">{{ shipment.port }} &rarr; {{ shipment.destination_area }}</p>
+<details class="row" open>
+<summary>
+<span class="cell">
+<span class="mono row-number">{{ container.number }}</span>
+<span class="sub">{{ container.size }}</span>
+</span>
+<span class="cell">
+<span class="row-place">{{ shipment.port }}</span>
+<span class="sub">{% if arrived_on %}Arrived {{ arrived_on|date:"j M Y" }}{% elif shipment.discharge_date %}Discharged {{ shipment.discharge_date|date:"j M Y" }}{% else %}Awaiting arrival{% endif %}</span>
+</span>
+<span class="cell">
+<span class="row-place">{{ shipment.destination_area }}</span>
+<span class="mini-label">Current state</span>
+<span class="cur">{% if current_label %}<svg class="dot dot-ok" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="currentColor"/></svg>{{ current_label }}{% else %}<span class="not-started">Not started</span>{% endif %}</span>
+</span>
+<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</summary>
+<div class="panel">
+{% include "tracking/_panel.html" with steps=steps clocks=clocks age_display=age_display hold=hold %}
 </div>
-<div class="card">
-<h2>Timeline</h2>
-<ol class="tl">
-{% for step in steps %}
-<li class="tl-{{ step.state }}">
-<span class="tl-dot" aria-hidden="true">{% if step.state == 'completed' %}&#10003;{% elif step.state == 'current' %}&#9679;{% elif step.state == 'processing' %}&#9681;{% else %}&#9675;{% endif %}</span>
-<div class="tl-body">
-<strong>{{ step.label }}</strong>
-{% if step.state == 'current' %} <span class="tag tag-current">Current</span>{% endif %}
-{% if step.state == 'processing' %} <span class="tag tag-processing">Processing</span>{% endif %}
-{% if step.state == 'upcoming' %} <span class="tag tag-muted">Upcoming</span>{% endif %}
-{% if step.occurred_at %}<br><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time>{% endif %}
-</div>
-</li>
-{% endfor %}
-</ol>
-<p><a href="{% url 'search' %}">Back to search</a></p>
-</div>
+</details>
 {% endif %}
 </main>
 {% endblock %}
