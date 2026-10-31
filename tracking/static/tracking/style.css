@@ -437,6 +437,74 @@ button {
   display: none;
 }
 
+html[data-lang="en"] .lang-pcm {
+  display: none;
+}
+
+html[data-lang="pcm"] .lang-en {
+  display: none;
+}
+
+.lang-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.lang-btn {
+  width: auto;
+  min-height: 44px;
+  margin-top: 0;
+  padding: 0.4rem 0.8rem;
+  background: var(--card);
+  color: var(--ink);
+  border: none;
+  border-radius: 0;
+  font-size: 0.95rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.lang-btn[aria-pressed="true"] {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+
+.info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 0 0.3rem;
+  padding: 0;
+  background: var(--card);
+  color: var(--muted);
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.step-info {
+  margin-top: 0.4rem;
+}
+
+.step-info-body {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.step-info-body p {
+  margin: 0.3rem 0;
+}
+
 .assistant-row {
   display: flex;
   gap: 8px;

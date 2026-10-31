@@ -8,12 +8,21 @@
 <span class="tl-dot tl-dot-{{ step.state }}">{% include "tracking/_stage_icon.html" with step_key=step.key %}</span>
 <div class="tl-body">
 <div class="tl-text">
-<strong>{{ step.label }}</strong>{% if step.state == 'current' %}<span class="visually-hidden">, current step</span>{% endif %}{% if step.state == 'upcoming' %}<span class="visually-hidden">, not yet reached</span>{% endif %}
+<strong>{{ step.label }}</strong>{% if step.explanation_en %} <button type="button" class="info-btn" aria-expanded="{% if step.state == 'current' %}true{% else %}false{% endif %}" aria-label="About {{ step.label }}"><span aria-hidden="true">i</span></button>{% endif %}{% if step.state == 'current' %}<span class="visually-hidden">, current step</span>{% endif %}{% if step.state == 'upcoming' %}<span class="visually-hidden">, not yet reached</span>{% endif %}
 {% if step.state == 'completed' or step.state == 'current' %}
 <br><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time>
 <br><span class="st-word st-{{ step.state }}">Completed</span>
 {% elif step.state == 'processing' %}
 <br><span class="st-word st-processing">In progress</span>
+{% endif %}
+{% if step.explanation_en %}
+<details class="step-info"{% if step.state == 'current' %} open{% endif %}>
+<div class="step-info-body">
+<p class="lang-en">{{ step.explanation_en }}</p>
+<p lang="pcm" class="lang-pcm">{{ step.explanation_pcm|default:step.explanation_en }}</p>
+<button type="button" class="listen-btn text-btn" hidden>Listen</button>
+</div>
+</details>
 {% endif %}
 </div>
 </div>

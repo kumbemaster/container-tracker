@@ -11,6 +11,7 @@ from .models import (
     StaffMember,
     Stage,
     StageEvent,
+    StageExplanation,
 )
 
 admin.site.register(AgentCompany)
@@ -23,3 +24,4 @@ admin.site.register(StaffMember)
 admin.site.register(AuditLog)
 admin.site.register(Document)
 admin.site.register(ProposedAction)
+admin.site.register(StageExplanation)

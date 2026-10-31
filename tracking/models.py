@@ -235,3 +235,19 @@ class Document(models.Model):
 
     def __str__(self):
         return f'{self.get_kind_display()} for {self.company}'
+
+
+class StageExplanation(models.Model):
+    class Lang(models.TextChoices):
+        EN = 'en', 'English'
+        PCM = 'pcm', 'Nigerian Pidgin'
+
+    stage = models.ForeignKey(Stage, on_delete=models.CASCADE)
+    lang = models.CharField(max_length=3, choices=Lang.choices)
+    text = models.CharField(max_length=300)
+
+    class Meta:
+        unique_together = [('stage', 'lang')]
+
+    def __str__(self):
+        return f'{self.stage.key} ({self.lang})'

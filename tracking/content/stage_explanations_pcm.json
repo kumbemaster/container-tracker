@@ -1,0 +1,15 @@
+{
+  "arrived_at_port": "Na wen the vessel wey carry your container don reach port. Your clearing agent fit continue the clearance work.",
+  "customs_examination": "Customs fit physically examine the container to check the goods with the documents. This step na for some shipments only.",
+  "customs_processed": "Customs don finish dem work and dem don release your cargo. Dis must happen before the container fit leave the port.",
+  "delivered": "The container don reach your delivery address. After you don offload, you must return the empty container to the terminal.",
+  "duty_paid": "Na wen dem pay import duty. After am, three processes go start and dem fit finish for any order: shipping line, terminal and customs.",
+  "empty_container_returned": "Empty container don return to the terminal. Dis don complete the shipment.",
+  "en_route_to_bonded_terminal": "Dem dey first move some container go bonded terminal, wey be secure area wey dem approve for goods wey dem still dey clear. This step na for some shipments only.",
+  "gate_out": "Na wen dem don issue gate pass and EIR (Equipment Interchange Receipt) and the container don comot for terminal.",
+  "in_transit": "The container dey road from the port to your delivery address.",
+  "manifest_available": "Manifest na shipping line list of everything wey dey for vessel. Once e don ready, customs fit assess your PAAR.",
+  "paar_assessed": "Customs don check your PAAR (Pre-Arrival Assessment Report) and dem don work out the duty wey you go pay for your shipment. After this, you go pay the duty.",
+  "shipping_line_processed": "Shipping line don finish dem own work, including to issue the Delivery Order (DO) wey go allow dem release your container.",
+  "terminal_processed": "Terminal don finish dem own work for your container and they don give terminal release order."
+}

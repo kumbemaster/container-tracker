@@ -11,6 +11,13 @@
 </form>
 {% endblock %}
 
+{% block langswitch %}
+<div class="lang-switch" role="group" aria-label="Language">
+<button type="button" class="lang-btn" data-set-lang="en" aria-pressed="true">EN</button>
+<button type="button" class="lang-btn" data-set-lang="pcm" aria-pressed="false">Pidgin</button>
+</div>
+{% endblock %}
+
 {% block content %}
 <main class="wrap">
 {% if is_bl_page %}
@@ -67,4 +74,83 @@
 </details>
 {% endif %}
 </main>
+<script>
+(function () {
+  var root = document.documentElement;
+  var buttons = Array.prototype.slice.call(
+    document.querySelectorAll('[data-set-lang]')
+  );
+  function apply(lang) {
+    var value = lang === 'pcm' ? 'pcm' : 'en';
+    root.setAttribute('data-lang', value);
+    buttons.forEach(function (btn) {
+      btn.setAttribute(
+        'aria-pressed',
+        btn.getAttribute('data-set-lang') === value ? 'true' : 'false'
+      );
+    });
+  }
+  if (buttons.length) {
+    var saved = null;
+    try { saved = localStorage.getItem('lang'); } catch (e) {}
+    apply(saved);
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        try {
+          localStorage.setItem(
+            'lang', btn.getAttribute('data-set-lang')
+          );
+        } catch (e) {}
+        apply(btn.getAttribute('data-set-lang'));
+      });
+    });
+  }
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.info-btn'),
+    function (btn) {
+      btn.addEventListener('click', function () {
+        var item = btn.closest('li');
+        var box = item ? item.querySelector('details.step-info') : null;
+        if (!box) return;
+        box.open = !box.open;
+        btn.setAttribute('aria-expanded', box.open ? 'true' : 'false');
+      });
+    }
+  );
+})();
+// Listen uses the browser Web Speech API only: a built-in browser
+// feature for reading text aloud, not a model call, and it makes no
+// network request.
+(function () {
+  if (!('speechSynthesis' in window)) return;
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.listen-btn'),
+    function (btn) {
+      btn.hidden = false;
+      btn.addEventListener('click', function () {
+        var synth = window.speechSynthesis;
+        if (synth.speaking || synth.pending) {
+          synth.cancel();
+          return;
+        }
+        var box = btn.closest('details');
+        var lang = document.documentElement.getAttribute('data-lang') === 'pcm'
+          ? 'pcm' : 'en';
+        var para = box ? box.querySelector('.lang-' + lang) : null;
+        var text = para ? para.textContent.trim() : '';
+        if (!text) return;
+        var speech = new SpeechSynthesisUtterance(text);
+        speech.rate = 0.9;
+        var voices = synth.getVoices();
+        speech.voice = voices.find(function (voice) {
+          return voice.lang.indexOf('en-NG') === 0;
+        }) || voices.find(function (voice) {
+          return voice.lang.indexOf('en-GB') === 0;
+        }) || null;
+        synth.speak(speech);
+      });
+    }
+  );
+})();
+</script>
 {% endblock %}

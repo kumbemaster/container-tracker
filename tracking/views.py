@@ -7,7 +7,7 @@ from django.utils import timezone
 from . import access as access_helpers
 from . import timeline as timeline_helpers
 from .clocks import build_clocks
-from .models import Container
+from .models import Container, StageExplanation
 
 COOKIE_NAME = 'device_token'
 ONE_YEAR = 365 * 24 * 60 * 60
@@ -139,7 +139,15 @@ def _age_display(updated_at, now):
     return 'Last updated %d %s ago.' % (days, unit)
 
 
-def _container_context(container):
+def _explanation_map():
+    """Stage key to {'en': text, 'pcm': text} for importer pages."""
+    mapping = {}
+    for row in StageExplanation.objects.select_related('stage'):
+        mapping.setdefault(row.stage.key, {})[row.lang] = row.text
+    return mapping
+
+
+def _container_context(container, explanations=None):
     now = timezone.now()
     fresh = timeline_helpers.freshness(container, now=now)
     if settings.SHOW_FREE_TIME_CLOCKS:
@@ -147,6 +155,12 @@ def _container_context(container):
     else:
         clocks = [None, None, None]
     steps = timeline_helpers.build_timeline(container, now=now)
+    if explanations is None:
+        explanations = _explanation_map()
+    for step in steps:
+        info = explanations.get(step['key'], {})
+        step['explanation_en'] = info.get('en')
+        step['explanation_pcm'] = info.get('pcm')
     arrived_at = next(
         (
             step['occurred_at']
@@ -172,8 +186,8 @@ def _container_context(container):
     }
 
 
-def _panel_context(container):
-    context = _container_context(container)
+def _panel_context(container, explanations=None):
+    context = _container_context(container, explanations)
     steps = context['steps']
     current = next(
         (step for step in steps if step['state'] == 'current'), None
@@ -191,12 +205,15 @@ def timeline(request, ref):
     session = _session_from_request(request)
     if session is None or not access_helpers.has_access(session, _owner_of(target)):
         return _private(redirect('/'))
+    explanations = _explanation_map()
     if isinstance(target, Container):
-        context = _panel_context(target)
+        context = _panel_context(target, explanations)
         context['is_bl_page'] = False
         return _private(render(request, 'tracking/timeline.html', context))
     containers = list(target.containers.order_by('number'))
-    panels = [_panel_context(container) for container in containers]
+    panels = [
+        _panel_context(container, explanations) for container in containers
+    ]
     if len(panels) == 1:
         panels[0]['open'] = True
     return _private(

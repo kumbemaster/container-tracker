@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,6 +12,7 @@
 <header class="sitebar">
 <a class="wordmark" href="{% url 'search' %}">Container Tracker</a>
 {% block topsearch %}{% endblock %}
+{% block langswitch %}{% endblock %}
 <nav class="sitenav">{% block nav %}{% endblock %}</nav>
 </header>
 {% block content %}{% endblock %}
