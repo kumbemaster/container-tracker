@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .ai.assistant import (
     COMMON_MISHEARINGS,
+    PAGE_CONTEXT_RULES,
     SYSTEM_INSTRUCTION,
     UNAVAILABLE_MESSAGE,
     VOICE_INSTRUCTION,
@@ -1092,6 +1093,142 @@ class PageContextTests(TestCase):
         self.assertNotIn(
             'sentinel-key-xyz', '\n'.join(logs.output)
         )
+
+
+class AssistantWordingTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_whole_shipment_already_recorded(self):
+        company = AgentCompany.objects.create(name='Recorded Co')
+        user = _agent(company, 'recorded-user')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        for key in ('arrived_at_port', 'manifest_available',
+                    'paar_assessed', 'duty_paid'):
+            self.assertIsNone(
+                shipment_stages.complete_shipment_stage(
+                    shipment, Stage.objects.get(key=key), user, 'manual'
+                )
+            )
+        with override_settings(META_API_KEY='sentinel-key-xyz'):
+            result = propose_stage_done(
+                company, shipment.pk, 'duty_paid',
+                pending=[], user=user,
+            )
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['items'], [])
+        self.assertEqual(len(result['results']), 1)
+        self.assertRegex(
+            result['results'][0]['problem'],
+            r'^Already recorded on \d{2} [A-Z][a-z]{2}, '
+            r'\d{2}:\d{2} for all 2 containers\.$',
+        )
+        self.assertNotIn('sentinel-key-xyz', json.dumps(result))
+        direct = propose_stage_done(company, shipment.pk, 'duty_paid')
+        self.assertEqual(direct['items'], [])
+        self.assertRegex(
+            direct['results'][0]['problem'], r'^Already recorded on ',
+        )
+
+    def test_per_container_already_recorded(self):
+        company = AgentCompany.objects.create(name='Recorded One Co')
+        user = _agent(company, 'recorded-one')
+        shipment, first, _ = _shipment(company, bl='DEMOBL002')
+        for key in ('arrived_at_port', 'manifest_available',
+                    'paar_assessed', 'duty_paid'):
+            self.assertIsNone(
+                shipment_stages.complete_shipment_stage(
+                    shipment, Stage.objects.get(key=key), user, 'manual'
+                )
+            )
+        stage = Stage.objects.get(key='shipping_line_processed')
+        shipment_stages.record_container_stage(
+            user, shipment, first, stage, timezone.now(), '', 'manual'
+        )
+        result = propose_stage_done(
+            company, shipment.pk, 'shipping_line_processed',
+            ['CSQU3054383'], pending=[], user=user,
+        )
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['items'], [])
+        self.assertEqual(len(result['results']), 1)
+        self.assertRegex(
+            result['results'][0]['problem'],
+            r'^Already recorded on \d{2} [A-Z][a-z]{2}, '
+            r'\d{2}:\d{2} for CSQU3054383\.$',
+        )
+
+    def test_instruction_wording_rules(self):
+        self.assertIn('"already recorded" and "proposed"', SYSTEM_INSTRUCTION)
+        self.assertIn(
+            'do not offer to propose it again', SYSTEM_INSTRUCTION
+        )
+        self.assertIn(
+            'Do not mention routine conversions', VOICE_INSTRUCTION
+        )
+        self.assertIn(
+            'could be a mishearing of a stage name', VOICE_INSTRUCTION
+        )
+        self.assertIn(
+            'Using DEMOBL002 as you named it', PAGE_CONTEXT_RULES
+        )
+        self.assertNotIn('proposed', PAGE_CONTEXT_RULES)
+
+    def test_proposal_names_single_shipment(self):
+        company = AgentCompany.objects.create(name='Heading Co')
+        user = _agent(company, 'heading-user')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        for key in ('arrived_at_port', 'manifest_available',
+                    'paar_assessed'):
+            self.assertIsNone(
+                shipment_stages.complete_shipment_stage(
+                    shipment, Stage.objects.get(key=key), user, 'manual'
+                )
+            )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': shipment.pk,
+                                'stage_key': 'duty_paid',
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Using DEMOBL002 as you named it.'),
+            ]
+        )
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            result = run_assistant(user, 'duty paid', [])
+        self.assertEqual(result['type'], 'proposal')
+        self.assertEqual(result['bl_number'], 'DEMOBL002')
+
+    def test_confirm_card_heading_and_clear_button(self):
+        company = AgentCompany.objects.create(name='Heading Page Co')
+        user = _agent(company, 'heading-page')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self.client.force_login(user)
+        response = self.client.get(
+            '/agent/shipments/%d/' % shipment.pk
+        )
+        self.assertContains(response, 'id="assistant-confirm-title"')
+        self.assertContains(response, 'Confirm these changes for ')
+        self.assertContains(
+            response, 'id="assistant-scope-clear" class="text-btn"'
+        )
+        self.assertContains(response, 'hidden>Clear</button>')
+        self.assertNotContains(
+            response, 'assistant-scope-clear" class="small-btn'
+        )
+        css = (
+            Path(__file__).parent / 'static' / 'tracking' / 'style.css'
+        ).read_text()
+        self.assertIn('.text-btn[hidden]', css)
 
 
 class AssistantLoopTests(TestCase):

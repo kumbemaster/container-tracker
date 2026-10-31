@@ -1,7 +1,7 @@
 <div class="card" id="assistant-card">
 <h2>Tell the assistant what happened</h2>
 <p class="help">The assistant is an AI model. Check each proposal before you confirm.</p>
-{% if assistant_bl %}<p class="help" id="assistant-scope" data-shipment-id="{{ assistant_shipment_id }}" data-bl="{{ assistant_bl }}">Applies to: <span class="mono">{{ assistant_bl }}</span><span id="assistant-scope-container" hidden> · <span class="mono" id="assistant-scope-number"></span></span> <button type="button" id="assistant-scope-clear" class="small-btn" hidden>Clear</button></p>{% endif %}
+{% if assistant_bl %}<p class="help" id="assistant-scope" data-shipment-id="{{ assistant_shipment_id }}" data-bl="{{ assistant_bl }}">Applies to: <span class="mono">{{ assistant_bl }}</span><span id="assistant-scope-container" hidden> · <span class="mono" id="assistant-scope-number"></span></span> <button type="button" id="assistant-scope-clear" class="text-btn" hidden>Clear</button></p>{% endif %}
 <form id="assistant-form">
 <p class="assistant-row"><label for="assistant-input" class="visually-hidden">What happened</label>
 <input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
@@ -14,7 +14,7 @@
 <p id="assistant-heard" hidden></p>
 <div id="assistant-results" aria-live="polite"></div>
 <div id="assistant-confirm" hidden>
-<h3>Confirm these changes</h3>
+<h3 id="assistant-confirm-title">Confirm these changes</h3>
 <ul id="assistant-summary"></ul>
 <p><button type="button" id="assistant-confirm-btn">Confirm</button>
 <button type="button" id="assistant-cancel-btn" class="small-btn">Cancel</button></p>
@@ -30,6 +30,7 @@
   var results = document.getElementById('assistant-results');
   var confirmBox = document.getElementById('assistant-confirm');
   var summary = document.getElementById('assistant-summary');
+  var confirmTitle = document.getElementById('assistant-confirm-title');
   var proposalId = null;
   var scope = document.getElementById('assistant-scope');
   var scopeContainer = document.getElementById('assistant-scope-container');
@@ -117,9 +118,14 @@
     };
     var context = pageContext();
     if (context) data.context = context;
+    if (confirmTitle) confirmTitle.textContent = 'Confirm these changes';
     post('/agent/assistant/', data).then(function (result) {
       if (result.type === 'proposal') {
         proposalId = result.id;
+        if (confirmTitle && result.bl_number) {
+          confirmTitle.textContent =
+            'Confirm these changes for ' + result.bl_number;
+        }
         summary.textContent = '';
         result.summary.forEach(function (line) {
           var li = document.createElement('li');

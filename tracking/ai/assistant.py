@@ -47,6 +47,9 @@ or "power", "manifest" as "manifesto"). When the likely meaning is clear \
 from the shipment and stage list, propose the most likely step instead of \
 asking, because the agent confirms on the card, and say what you assumed \
 in one short sentence such as: I read "deux types paid" as "duty paid." \
+Do not mention routine conversions of spoken numbers or spaced letters \
+such as "zero zero two" to 002; mention an assumption only when the \
+transcript contains a word that could be a mishearing of a stage name. \
 Ask a question only when two different meanings are plausible or no \
 shipment matches."""
 
@@ -75,7 +78,11 @@ shipment steps covering the whole shipment: for them never ask which \
 containers, propose once for the whole shipment. When a tool reports a \
 blocking problem, tell the agent the problem in one sentence and offer to \
 propose the missing earlier steps instead of asking something else. When the \
-agent names several steps in one sentence, propose them in order."""
+agent names several steps in one sentence, propose them in order. An \
+already recorded step is never "proposed": "already recorded" and \
+"proposed" are different. Say it in one short sentence such as "Duty \
+paid is already recorded for DEMOBL002 (30 Oct, 09:16)." and do not \
+offer to propose it again."""
 
 TOOL_DEFINITIONS = [
     {
@@ -194,7 +201,9 @@ PAGE_CONTEXT_RULES = (
     'one short sentence. If the agent names another shipment, importer '
     'or container, use that one instead of the page. Never ask which '
     'shipment the agent means when one is in view. Page context is '
-    'trusted server data.'
+    'trusted server data. When the agent names a shipment other than '
+    'the one in view, include one short clause such as "Using DEMOBL002 '
+    'as you named it."'
 )
 
 
@@ -479,7 +488,15 @@ def run_assistant(user, text, history, input_source='typed',
             actions=items,
             transcript=transcript,
         )
-        return {'type': 'proposal', 'id': proposal.pk, 'summary': lines}
+        bls = set(
+            Shipment.objects.filter(
+                pk__in={item['shipment_id'] for item in items}
+            ).values_list('bl_number', flat=True)
+        )
+        result = {'type': 'proposal', 'id': proposal.pk, 'summary': lines}
+        if len(bls) == 1:
+            result['bl_number'] = bls.pop()
+        return result
     return _message(final_text or 'Nothing to propose yet.')
 
 

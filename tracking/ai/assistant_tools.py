@@ -105,6 +105,52 @@ def _error(message):
     return {'ok': False, 'error': message}
 
 
+def _lagos_stamp(moment):
+    return timezone.localtime(moment).strftime('%d %b, %H:%M')
+
+
+def _latest_recorded_at(shipment, stage):
+    return (
+        StageEvent.objects.filter(
+            container__shipment=shipment,
+            stage=stage,
+            occurred_at__isnull=False,
+            skipped=False,
+        )
+        .order_by('-occurred_at')
+        .values_list('occurred_at', flat=True)
+        .first()
+    )
+
+
+def _whole_already_message(shipment, stage):
+    count = shipment.containers.count()
+    latest = _latest_recorded_at(shipment, stage)
+    if latest is None:
+        return 'Already recorded for all %d containers.' % count
+    return 'Already recorded on %s for all %d containers.' % (
+        _lagos_stamp(latest), count
+    )
+
+
+def _container_already_message(container, stage):
+    event = (
+        StageEvent.objects.filter(
+            container=container,
+            stage=stage,
+            occurred_at__isnull=False,
+            skipped=False,
+        )
+        .order_by('-occurred_at')
+        .first()
+    )
+    if event is None:
+        return 'Already recorded for %s.' % container.number
+    return 'Already recorded on %s for %s.' % (
+        _lagos_stamp(event.occurred_at), container.number
+    )
+
+
 def _shipment_scope(company, shipment_id):
     try:
         pk = int(shipment_id)
@@ -389,7 +435,7 @@ def _direct_whole_result(
                 {
                     'number': None,
                     'ok': False,
-                    'problem': shipment_stages.ALREADY_RECORDED,
+                    'problem': _whole_already_message(shipment, stage),
                 }
             ],
             'items': [],
@@ -569,6 +615,13 @@ def apply_proposal_item(company, user, item, when, source):
         stage = Stage.objects.filter(key=item.get('stage_key')).first()
         if stage is None:
             return False, 'Unknown stage for %s.' % container.number
+        if StageEvent.objects.filter(
+            container=container,
+            stage=stage,
+            occurred_at__isnull=False,
+            skipped=False,
+        ).exists():
+            return False, _container_already_message(container, stage)
         problems = stage_rules.check_can_complete(container, stage, when)
         if problems:
             return False, 'Refused %s for %s: %s' % (
@@ -647,7 +700,7 @@ def _apply_whole_item(company, user, shipment, item, source):
             return True, 'Recorded %s for %d containers.' % (
                 stage.label, count)
         if problem == shipment_stages.ALREADY_RECORDED:
-            return False, problem
+            return False, _whole_already_message(shipment, stage)
         return False, 'Refused %s: %s' % (stage.label, problem)
     if kind == 'select_optional':
         if not stage.is_optional or stage.key not in OPTIONAL_STAGE_KEYS:
@@ -657,7 +710,7 @@ def _apply_whole_item(company, user, shipment, item, source):
         ).values_list('container_id', flat=True)
         lacking = shipment.containers.exclude(pk__in=existing)
         if not lacking.exists():
-            return False, shipment_stages.ALREADY_RECORDED
+            return False, _whole_already_message(shipment, stage)
         with transaction.atomic():
             for container in lacking:
                 StageEvent.objects.get_or_create(
