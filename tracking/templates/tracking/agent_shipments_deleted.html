@@ -3,7 +3,7 @@
 {% block title %}Deleted shipments{% endblock %}
 
 {% block content %}
-<main class="wrap">
+<main class="wrap agent-wrap agent-narrow">
 <div class="card">
 <h1>Deleted shipments</h1>
 {% if messages %}
@@ -12,7 +12,7 @@
 {% endfor %}
 {% endif %}
 {% if shipments %}
-<table class="agent-table">
+<table class="agent-table stack-table">
 <thead>
 <tr><th>BL number</th><th>Importer</th><th>Deleted</th><th></th></tr>
 </thead>

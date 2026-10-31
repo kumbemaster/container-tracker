@@ -3,16 +3,29 @@
 {% block title %}Shipments{% endblock %}
 
 {% block content %}
-<main class="wrap">
-{% include "tracking/_assistant.html" %}
-<div class="card">
+<main class="wrap agent-wrap">
+<div class="agent-cols">
+<div class="agent-main">
+<div class="page-head">
+<div>
 <h1>Shipments</h1>
+{% if show_closed %}
+<p class="count-line">{{ rows|length }} shipment{{ rows|length|pluralize }} in total</p>
+{% else %}
+<p class="count-line">{{ rows|length }} open shipment{{ rows|length|pluralize }}</p>
+{% endif %}
+</div>
+<div class="page-actions">
+<a class="btn" href="{% url 'agent_shipment_new' %}">New shipment</a>
+<a class="btn btn-secondary" href="{% url 'agent_shipment_scan' %}">Scan a BL</a>
+</div>
+</div>
+<div class="card">
 {% if messages %}
 {% for production_message in messages %}
 <p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
 {% endfor %}
 {% endif %}
-<p><a href="{% url 'agent_shipment_new' %}">New shipment</a> · <a href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if rows %}
 <table class="agent-table">
 <thead>
@@ -24,23 +37,43 @@
 <td class="mono">{{ row.shipment.bl_number }}</td>
 <td>{{ row.shipment.importer.name }}</td>
 <td>{{ row.shipment.container_count }}</td>
-<td>{{ row.current_step }}</td>
+<td><span class="pill"><span class="dot" aria-hidden="true"></span>{{ row.current_step }}</span></td>
 <td>{% if row.days_since_update is None %}—{% elif row.days_since_update == 0 %}today{% elif row.days_since_update == 1 %}1 day ago{% else %}{{ row.days_since_update }} days ago{% endif %}</td>
-<td><a href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a> · <a href="{% url 'agent_shipment_delete' pk=row.shipment.pk %}">Delete</a></td>
+<td><span class="row-actions"><a class="btn btn-sm" href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a><a class="btn btn-danger btn-sm" href="{% url 'agent_shipment_delete' pk=row.shipment.pk %}">Delete</a></span></td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+<div class="ship-cards">
+{% for row in rows %}
+<div class="ship-card">
+<div class="mono ship-bl">{{ row.shipment.bl_number }}</div>
+<div class="ship-imp">{{ row.shipment.importer.name }}</div>
+<div class="ship-meta">{{ row.shipment.container_count }} container{{ row.shipment.container_count|pluralize }}</div>
+<div><span class="pill"><span class="dot" aria-hidden="true"></span>{{ row.current_step }}</span></div>
+<div class="ship-upd">Updated {% if row.days_since_update is None %}—{% elif row.days_since_update == 0 %}today{% elif row.days_since_update == 1 %}1 day ago{% else %}{{ row.days_since_update }} days ago{% endif %}</div>
+<div class="ship-actions">
+<a class="btn btn-sm" href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a>
+<a class="btn btn-danger btn-sm" href="{% url 'agent_shipment_delete' pk=row.shipment.pk %}">Delete</a>
+</div>
+</div>
+{% endfor %}
+</div>
 {% else %}
 <p>No shipments yet.</p>
-<p><a href="{% url 'agent_shipment_new' %}">New shipment</a> — enter the BL number and containers by hand.</p>
-<p><a href="{% url 'agent_shipment_scan' %}">Scan a BL</a> — upload a photo of the bill of lading to prefill the form.</p>
+<p><a class="btn" href="{% url 'agent_shipment_new' %}">New shipment</a> — enter the BL number and containers by hand.</p>
+<p><a class="btn btn-secondary" href="{% url 'agent_shipment_scan' %}">Scan a BL</a> — upload a photo of the bill of lading to prefill the form.</p>
 {% endif %}
 {% if show_closed %}
 <p><a href="{% url 'agent_shipments' %}">Hide closed shipments</a> · <a href="{% url 'agent_deleted_shipments' %}">Deleted shipments</a></p>
 {% else %}
 <p><a href="{% url 'agent_shipments' %}?show=closed">Show closed shipments</a> · <a href="{% url 'agent_deleted_shipments' %}">Deleted shipments</a></p>
 {% endif %}
+</div>
+</div>
+<aside class="agent-side">
+{% include "tracking/_assistant.html" %}
+</aside>
 </div>
 </main>
 {% endblock %}

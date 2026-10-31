@@ -6,8 +6,8 @@
 <p class="assistant-row"><label for="assistant-input" class="visually-hidden">What happened</label>
 <input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
 <input type="hidden" id="assistant-source" name="input_source" value="typed">
-<button type="submit" id="assistant-send">Send</button>
-<button type="button" id="assistant-mic" class="small-btn" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg> <span id="assistant-mic-label">Speak</span></button></p>
+<button type="submit" id="assistant-send" class="btn">Send</button>
+<button type="button" id="assistant-mic" class="btn btn-secondary" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg> <span id="assistant-mic-label">Speak</span></button></p>
 </form>
 <p id="assistant-voice-status" role="status" aria-live="polite"></p>
 <p class="help">Voice is transcribed by an AI model. Check what it heard before you confirm.</p>
@@ -16,8 +16,8 @@
 <div id="assistant-confirm" hidden>
 <h3 id="assistant-confirm-title">Confirm these changes</h3>
 <ul id="assistant-summary"></ul>
-<p><button type="button" id="assistant-confirm-btn">Confirm</button>
-<button type="button" id="assistant-cancel-btn" class="small-btn">Cancel</button></p>
+<p><button type="button" id="assistant-confirm-btn" class="btn">Confirm</button>
+<button type="button" id="assistant-cancel-btn" class="btn btn-secondary">Cancel</button></p>
 </div>
 </div>
 <script>
@@ -101,11 +101,32 @@
       body: JSON.stringify(data)
     }).then(function (response) { return response.json(); });
   }
+  var STAGE_PHRASES = [
+    'arrived at port', 'manifest available', 'paar assessed', 'duty paid',
+    'en route to bonded terminal', 'shipping line processed',
+    'terminal processed', 'customs examination', 'customs processed',
+    'gate out', 'in transit', 'delivered', 'empty container returned'
+  ];
+  function esc(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
   function showText(text) {
     results.textContent = '';
+    var box = document.createElement('div');
+    box.className = 'reply-panel';
     var p = document.createElement('p');
-    p.textContent = text;
-    results.appendChild(p);
+    var html = esc(text);
+    STAGE_PHRASES.forEach(function (phrase) {
+      html = html.replace(
+        new RegExp('\\b(' + phrase + ')\\b', 'gi'), '<b>$1</b>'
+      );
+    });
+    p.innerHTML = html.replace(
+      /\b([A-Z]{2,}[A-Z0-9-]*\d[A-Z0-9-]*)\b/g, '<b>$1</b>'
+    );
+    box.appendChild(p);
+    results.appendChild(box);
   }
   form.addEventListener('submit', function (e) {
     e.preventDefault();

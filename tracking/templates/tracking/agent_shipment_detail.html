@@ -3,16 +3,25 @@
 {% block title %}Shipment {{ shipment.bl_number }}{% endblock %}
 
 {% block content %}
-<main class="wrap">
-{% include "tracking/_assistant.html" with assistant_bl=shipment.bl_number assistant_shipment_id=shipment.pk %}
+<main class="wrap agent-wrap">
+<div class="agent-cols">
+<div class="agent-main">
 <div class="card compact">
-<h1 class="mono">{{ shipment.bl_number }}</h1>
+<h1 class="mono detail-bl">{{ shipment.bl_number }}</h1>
 <p class="imp-line">{{ shipment.importer.name }}</p>
-<p>Access code: <span class="mono" id="copy-code">{{ shipment.importer.access_code }}</span>
-<button type="button" id="copy-code-btn" class="small-btn">Copy code</button></p>
+<div class="detail-grid">
+<div>
+<p class="mini-label">Access code</p>
+<p><span class="mono" id="copy-code">{{ shipment.importer.access_code }}</span></p>
+<p><button type="button" id="copy-code-btn" class="btn btn-secondary btn-sm">Copy code</button></p>
+</div>
+<div>
+<p class="mini-label">Share message</p>
 <p id="copy-msg">{{ message }}</p>
-<p><button type="button" id="copy-msg-btn" class="small-btn">Copy message</button></p>
-<p><a href="{% url 'agent_shipment_delete' pk=shipment.pk %}">Delete</a></p>
+<p><button type="button" id="copy-msg-btn" class="btn btn-secondary btn-sm">Copy message</button></p>
+</div>
+</div>
+<p><a class="btn btn-danger btn-sm" href="{% url 'agent_shipment_delete' pk=shipment.pk %}">Delete</a></p>
 </div>
 <div class="card">
 <h2>Update stage</h2>
@@ -198,6 +207,11 @@
 {% endfor %}
 </ul>
 </details>
+</div>
+<aside class="agent-side">
+{% include "tracking/_assistant.html" with assistant_bl=shipment.bl_number assistant_shipment_id=shipment.pk %}
+</aside>
+</div>
 </main>
 <script>
 document.querySelectorAll('[id^="copy-"][id$="-btn"]').forEach(function (btn) {

@@ -1,10 +1,23 @@
 {% extends "tracking/base.html" %}
 
 {% block nav %}
+<div class="agent-nav">
 <a class="nav-link" href="{% url 'agent_shipments' %}">Shipments</a>
 <a class="nav-link" href="{% url 'agent_importers' %}">Importers</a>
 <form class="logout-form" method="post" action="{% url 'agent_logout' %}">
 {% csrf_token %}
 <button type="submit" class="logout-btn">Logout</button>
 </form>
+</div>
+<details class="agent-menu">
+<summary>Menu</summary>
+<div class="agent-menu-body">
+<a class="nav-link" href="{% url 'agent_shipments' %}">Shipments</a>
+<a class="nav-link" href="{% url 'agent_importers' %}">Importers</a>
+<form class="logout-form" method="post" action="{% url 'agent_logout' %}">
+{% csrf_token %}
+<button type="submit" class="logout-btn">Logout</button>
+</form>
+</div>
+</details>
 {% endblock %}

@@ -3,7 +3,7 @@
 {% block title %}Importers{% endblock %}
 
 {% block content %}
-<main class="wrap">
+<main class="wrap agent-wrap agent-narrow">
 <div class="card">
 <h2>Add importer</h2>
 {% if messages %}
@@ -22,13 +22,13 @@
 <div class="card">
 <p class="success">Added importer {{ new_importer.name }} with code <span class="mono">{{ new_importer.access_code }}</span>.</p>
 <p id="ready-msg">Your tracking code for {{ site }} is {{ new_importer.access_code }}.</p>
-<p><button type="button" id="ready-copy-btn" class="small-btn">Copy</button></p>
+<p><button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button></p>
 </div>
 {% endif %}
 <div class="card">
 <h1>Importers</h1>
 {% if importers %}
-<table class="agent-table">
+<table class="agent-table stack-table">
 <thead>
 <tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th>Shipments</th><th></th><th></th><th></th></tr>
 </thead>
@@ -40,7 +40,7 @@
 <td>{% if importer.access_active %}yes{% else %}no{% endif %}</td>
 <td>{% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y, H:i" }}{% else %}—{% endif %}</td>
 <td>{{ importer.shipment_count }}</td>
-<td><a href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a></td>
+<td><a class="btn btn-quiet" href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a></td>
 <td>
 <details>
 <summary>Edit name</summary>

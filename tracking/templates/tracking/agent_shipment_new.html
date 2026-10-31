@@ -3,10 +3,10 @@
 {% block title %}New shipment{% endblock %}
 
 {% block content %}
-<main class="wrap">
+<main class="wrap agent-wrap agent-narrow">
 <div class="card">
 <h1>New shipment</h1>
-<p><a href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
+<p><a class="btn btn-quiet" href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if prefill %}
 <p class="scan-banner">Prefilled from your scan. Nothing is saved until you submit.</p>
 {% endif %}
