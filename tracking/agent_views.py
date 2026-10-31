@@ -208,6 +208,7 @@ def shipment_new(request):
         form = ShipmentForm(company, initial=initial)
         _apply_scan_prefill(request, company, form, context)
     context['form'] = form
+    context['duplicate_shipment'] = form.duplicate_shipment
     return render(request, 'tracking/agent_shipment_new.html', context)
 
 

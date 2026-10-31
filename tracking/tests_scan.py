@@ -174,6 +174,21 @@ class NormaliseExtractionTests(TestCase):
         self.assertEqual(result['importer_name'], 'DEMO LINE')
         self.assertEqual(result['goods_description'], 'FROZEN FISH')
 
+    def test_bl_lookalikes_flagged_uncertain(self):
+        for raw in ('DEM0BL002', 'AB12O34', 'MA1ERSK', 'X5I7Z'):
+            result = normalise_extraction({'bl_number': raw})
+            self.assertEqual(result['bl_number'], raw)
+            self.assertIn('bl_number', result['uncertain'], raw)
+        for raw in ('DEMOBL002', 'MEDU1234567'):
+            result = normalise_extraction({'bl_number': raw})
+            self.assertNotIn('bl_number', result['uncertain'], raw)
+
+    def test_bl_lookalike_not_duplicated(self):
+        result = normalise_extraction(
+            {'bl_number': 'DEM0BL002', 'uncertain': ['bl_number']}
+        )
+        self.assertEqual(result['uncertain'], ['bl_number'])
+
 
 class PrepareImageTests(TestCase):
     def test_shrinks_large_image_to_jpeg(self):

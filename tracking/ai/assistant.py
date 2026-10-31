@@ -45,7 +45,11 @@ shipping_line_processed (shipping line processed, DO released), \
 terminal_processed (terminal processed), customs_examination (customs exam, \
 when selected), customs_processed (customs processed or released), gate_out \
 (gate out, truck don comot), in_transit (In transit), delivered (Delivered, \
-goods don reach), empty_container_returned (empty returned)."""
+goods don reach), empty_container_returned (empty returned). Reply in the \
+same language the agent last used: English unless they wrote in Pidgin. Keep \
+replies to two short sentences. When asking which shipment is meant, list at \
+most three candidates by BL number, importer name and container numbers, and \
+never mention internal ids or database numbers; the agent never knows them."""
 
 TOOL_DEFINITIONS = [
     {

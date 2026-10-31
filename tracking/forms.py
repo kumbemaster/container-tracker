@@ -2,7 +2,7 @@ import re
 
 from django import forms
 
-from .models import Importer
+from .models import Importer, Shipment
 from .validators import is_valid_container_number
 
 CONTAINER_SIZES = ['20ft', '40ft', '40HC']
@@ -37,6 +37,7 @@ class ShipmentForm(forms.Form):
         ).order_by('name')
         self.fields['importer'].label_from_instance = lambda obj: obj.name
         self.company = company
+        self.duplicate_shipment = None
         self.rows = self._rows_from_data() if self.is_bound else [self._blank_row()]
 
     def clean(self):
@@ -47,11 +48,30 @@ class ShipmentForm(forms.Form):
             raise forms.ValidationError(
                 'Choose an importer or type a new importer name.'
             )
+        bl_number = cleaned.get('bl_number') or ''
+        if bl_number:
+            match = self._duplicate_shipment(bl_number)
+            if match is not None:
+                self.duplicate_shipment = match
+                raise forms.ValidationError(
+                    'A shipment with this BL number already exists.'
+                )
         self.rows = self._validate_rows()
         return cleaned
 
     def clean_bl_number(self):
-        return (self.cleaned_data['bl_number'] or '').strip().upper()
+        return re.sub(
+            r'\s+', '', self.cleaned_data['bl_number'] or ''
+        ).upper()
+
+    def _duplicate_shipment(self, bl_number):
+        """Return the pk of this company's shipment with the same BL."""
+        for pk, existing in Shipment.objects.filter(
+            importer__agent_company=self.company
+        ).values_list('pk', 'bl_number'):
+            if re.sub(r'\s+', '', existing or '').upper() == bl_number:
+                return pk
+        return None
 
     def _blank_row(self):
         return {'number': '', 'size': '', 'errors': []}

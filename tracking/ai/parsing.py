@@ -70,6 +70,23 @@ def normalise_number(raw):
     return re.sub(r'[\s-]', '', str(raw or '')).upper()
 
 
+#: A digit 0 between two letters, a letter O between two digits,
+#: a digit 1 between two letters, or a letter I between two digits.
+LOOKALIKE_PATTERNS = (
+    re.compile(r'[A-Z]0[A-Z]', re.IGNORECASE),
+    re.compile(r'\dO\d', re.IGNORECASE),
+    re.compile(r'[A-Z]1[A-Z]', re.IGNORECASE),
+    re.compile(r'\dI\d', re.IGNORECASE),
+)
+
+
+def _has_lookalikes(bl_number):
+    """Check a BL number for look-alike characters (0/O, 1/I)."""
+    return any(
+        pattern.search(bl_number) for pattern in LOOKALIKE_PATTERNS
+    )
+
+
 def _text(value):
     if value is None:
         return None
@@ -140,8 +157,15 @@ def normalise_extraction(data):
         if number and not valid:
             uncertain.append('containers[%d].number' % index)
         containers.append({'number': number, 'size': size, 'valid': valid})
+    bl_number = _text(data.get('bl_number'))
+    if (
+        bl_number
+        and _has_lookalikes(bl_number)
+        and 'bl_number' not in uncertain
+    ):
+        uncertain.append('bl_number')
     return {
-        'bl_number': _text(data.get('bl_number')),
+        'bl_number': bl_number,
         'shipping_line': _text(data.get('shipping_line')),
         'port': _clean_place(data.get('port_of_discharge')),
         'destination_area': _clean_place(data.get('place_of_delivery')),

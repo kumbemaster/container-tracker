@@ -564,6 +564,53 @@ class AgentTests(TestCase):
             Importer.objects.filter(pk=importer.pk).exists()
         )
 
+    def test_duplicate_bl_refused_with_link(self):
+        company = self._company('Dup BL Co')
+        user = self._agent(company, 'dup-bl')
+        importer = self._importer(company)
+        existing = self._shipment(importer, bl='DUPBL001')
+        existing.closed_at = timezone.now()
+        existing.save()
+        self.client.force_login(user)
+        response = self._new_shipment_post(
+            importer_pk=str(importer.pk),
+            bl_number=' dup bl001 ',
+            c_number=['CSQU3054383'],
+            c_size=['40ft'],
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'A shipment with this BL number already exists.'
+        )
+        self.assertContains(
+            response, '/agent/shipments/%d/' % existing.pk
+        )
+        self.assertContains(response, 'CSQU3054383')
+        self.assertEqual(
+            Shipment.objects.filter(
+                importer__agent_company=company
+            ).count(),
+            1,
+        )
+
+    def test_same_bl_other_company_allowed(self):
+        company_a = self._company('BL Same A')
+        company_b = self._company('BL Same B')
+        user_a = self._agent(company_a, 'bl-a')
+        self._shipment(self._importer(company_b), bl='SHAREDBL001')
+        importer_a = self._importer(company_a)
+        self.client.force_login(user_a)
+        response = self._new_shipment_post(
+            importer_pk=str(importer_a.pk), bl_number='sharedbl001'
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Shipment.objects.filter(
+                importer__agent_company=company_a,
+                bl_number='SHAREDBL001',
+            ).exists()
+        )
+
 
 class RenderedFormTests(TestCase):
     def setUp(self):

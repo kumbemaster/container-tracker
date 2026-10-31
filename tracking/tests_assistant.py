@@ -9,7 +9,11 @@ from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from .ai.assistant import UNAVAILABLE_MESSAGE, run_assistant
+from .ai.assistant import (
+    SYSTEM_INSTRUCTION,
+    UNAVAILABLE_MESSAGE,
+    run_assistant,
+)
 from .ai.assistant_tools import (
     ask_clarification,
     find_shipments,
@@ -590,6 +594,12 @@ class AssistantToolsTests(TestCase):
 class AssistantLoopTests(TestCase):
     def setUp(self):
         cache.clear()
+
+    def test_system_instruction_language_and_no_ids(self):
+        self.assertIn('Pidgin', SYSTEM_INSTRUCTION)
+        self.assertIn('two short sentences', SYSTEM_INSTRUCTION)
+        self.assertIn('at most three candidates', SYSTEM_INSTRUCTION)
+        self.assertIn('never mention internal ids', SYSTEM_INSTRUCTION)
     def test_proposal_flow_stores_action(self):
         company = AgentCompany.objects.create(name='Loop Co')
         user = _agent(company, 'looper')

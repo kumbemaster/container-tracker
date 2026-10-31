@@ -21,6 +21,7 @@
 <p>{{ form.importer.label_tag }} {{ form.importer }} {{ form.importer.errors }}</p>
 <p>{{ form.new_importer_name.label_tag }} {{ form.new_importer_name }} {{ form.new_importer_name.errors }}{% if importer_check %} <span class="check-note">Check this</span>{% endif %}<br><span class="help">{{ form.new_importer_name.help_text }}</span></p>
 <p>{{ form.bl_number.label_tag }} {{ form.bl_number }} {{ form.bl_number.errors }}{% if 'bl_number' in uncertain %} <span class="check-note">Check this</span>{% endif %}<br><span class="help">{{ form.bl_number.help_text }}</span></p>
+{% if duplicate_shipment %}<p class="error"><a href="{% url 'agent_shipment_detail' pk=duplicate_shipment %}">View the existing shipment</a>.</p>{% endif %}
 <p>{{ form.shipping_line.label_tag }} {{ form.shipping_line }} {{ form.shipping_line.errors }}{% if 'shipping_line' in uncertain %} <span class="check-note">Check this</span>{% endif %}</p>
 <p>{{ form.port.label_tag }} {{ form.port }} {{ form.port.errors }}{% if 'port' in uncertain %} <span class="check-note">Check this</span>{% endif %}</p>
 <p>{{ form.destination_area.label_tag }} {{ form.destination_area }} {{ form.destination_area.errors }}{% if 'destination_area' in uncertain %} <span class="check-note">Check this</span>{% endif %}</p>
