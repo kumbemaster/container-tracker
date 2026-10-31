@@ -1,6 +1,7 @@
 import json
 import os
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -287,6 +288,18 @@ class ImporterExplanationPageTests(TestCase):
         self.assertContains(
             response, 'class="i-circle" aria-hidden="true"'
         )
+
+    def test_step_summary_has_three_block_lines(self):
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertContains(response, 'step-line')
+        self.assertContains(response, 'step-date')
+        self.assertContains(response, 'st-word')
+        css = (
+            Path(__file__).parent / 'static' / 'tracking' / 'style.css'
+        ).read_text()
+        self.assertIn('.step-summary {\n  display: block;', css)
+        self.assertIn('.step-line {\n  display: block;', css)
+        self.assertIn('.step-date {\n  display: block;', css)
 
     def test_pidgin_falls_back_to_english(self):
         StageExplanation.objects.filter(

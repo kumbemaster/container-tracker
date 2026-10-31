@@ -614,6 +614,68 @@ class ContainerTimelineTests(TestCase):
         )
 
 
+class CurrentStageTests(TestCase):
+    def _container(self):
+        company = AgentCompany.objects.create(name='Order Co')
+        importer = Importer.objects.create(
+            agent_company=company, name='Order Foods', access_code='123456'
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='ORDERBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        return Container.objects.create(
+            shipment=shipment, number='CSQU3054383', size='40ft'
+        )
+
+    def test_current_is_highest_order_not_latest_time(self):
+        container = self._container()
+        now = timezone.now()
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=now,
+        )
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='manifest_available'),
+            occurred_at=now - timedelta(days=5),
+        )
+        current = timeline_helpers.current_stage(container)
+        self.assertEqual(current['key'], 'manifest_available')
+
+    def test_current_none_when_nothing_completed(self):
+        container = self._container()
+        self.assertIsNone(timeline_helpers.current_stage(container))
+
+    def test_timeline_lists_stages_in_stage_order(self):
+        container = self._container()
+        now = timezone.now()
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=now,
+        )
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='manifest_available'),
+            occurred_at=now - timedelta(days=5),
+        )
+        steps = timeline_helpers.build_timeline(container)
+        order_by_key = {
+            stage.key: stage.order for stage in Stage.objects.all()
+        }
+        orders = [order_by_key[step['key']] for step in steps]
+        self.assertEqual(orders, sorted(orders))
+        self.assertEqual(steps[0]['key'], 'arrived_at_port')
+        self.assertEqual(steps[0]['state'], 'completed')
+        self.assertEqual(steps[1]['key'], 'manifest_available')
+        self.assertEqual(steps[1]['state'], 'current')
+
+
 class ResultsPagesTests(TestCase):
     def setUp(self):
         call_command('seed_demo')

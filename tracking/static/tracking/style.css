@@ -477,7 +477,12 @@ html[data-lang="pcm"] .lang-en {
   font-weight: 700;
 }
 
+summary:focus:not(:focus-visible) {
+  outline: none;
+}
+
 .step-summary {
+  display: block;
   list-style: none;
   cursor: pointer;
 }
@@ -534,37 +539,24 @@ html[data-lang="pcm"] .lang-en {
   margin: 0.3rem 0;
 }
 
-.assistant-row {
+.assistant-buttons {
   display: flex;
-  gap: 8px;
-  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.assistant-row #assistant-input {
-  flex: 1;
-  min-width: 0;
-  width: auto;
+.assistant-buttons .btn {
+  flex: 1 1 0;
+  min-width: 130px;
+  min-height: 52px;
 }
 
-.assistant-row #assistant-send,
-.assistant-row #assistant-mic {
-  width: auto;
-  margin-top: 0;
-  flex: none;
-  white-space: nowrap;
+#assistant-form p {
+  margin: 0 0 16px;
 }
 
-@media (max-width: 480px) {
-  .assistant-row {
-    flex-wrap: wrap;
-  }
-  .assistant-row #assistant-input {
-    flex: 1 1 100%;
-  }
-  .assistant-row #assistant-send,
-  .assistant-row #assistant-mic {
-    flex: 1;
-  }
+#assistant-results {
+  margin-top: 16px;
 }
 
 .dialog {
@@ -1553,6 +1545,87 @@ importer pages keep their exact look. */
   flex: 1;
 }
 
+/* Importer cards */
+
+.imp-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+@media (min-width: 1000px) {
+  .imp-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.imp-card .imp-name {
+  font-size: 20px;
+  margin-bottom: 0.5rem;
+}
+
+.imp-code {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.imp-status {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0.3rem 0;
+}
+
+.imp-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+.imp-actions .btn {
+  min-width: 120px;
+}
+
+.imp-actions form {
+  margin: 0;
+}
+
+.rename {
+  margin-top: 8px;
+}
+
+.rename summary {
+  list-style: none;
+}
+
+.rename summary::-webkit-details-marker {
+  display: none;
+}
+
+.imp-add-row {
+  display: flex;
+  gap: 16px;
+  align-items: end;
+}
+
+.imp-add-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.imp-add-row .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 639px) {
+  .imp-add-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 /* Shipment detail header */
 
 .detail-bl {
@@ -1593,8 +1666,11 @@ importer pages keep their exact look. */
 /* Assistant card */
 
 .agent-wrap #assistant-input {
-  min-height: 52px;
+  display: block;
+  width: 100%;
+  min-height: 96px;
   font-size: 18px;
+  resize: vertical;
 }
 
 .agent-wrap #assistant-send,
@@ -1651,6 +1727,7 @@ importer pages keep their exact look. */
 
 .agent-wrap #assistant-card .help {
   font-size: 14px;
+  margin: 0 0 16px;
 }
 
 /* Agent top bar menu */

@@ -3,9 +3,11 @@
 <p class="help">The assistant is an AI model. Check each proposal before you confirm.</p>
 {% if assistant_bl %}<p class="help" id="assistant-scope" data-shipment-id="{{ assistant_shipment_id }}" data-bl="{{ assistant_bl }}">Applies to: <span class="mono">{{ assistant_bl }}</span><span id="assistant-scope-container" hidden> · <span class="mono" id="assistant-scope-number"></span></span> <button type="button" id="assistant-scope-clear" class="text-btn" hidden>Clear</button></p>{% endif %}
 <form id="assistant-form">
-<p class="assistant-row"><label for="assistant-input" class="visually-hidden">What happened</label>
-<input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
-<input type="hidden" id="assistant-source" name="input_source" value="typed">
+<p><label for="assistant-input" class="visually-hidden">What happened</label>
+<textarea id="assistant-input" name="text" rows="3" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off"></textarea>
+<input type="hidden" id="assistant-source" name="input_source" value="typed"></p>
+<p class="help">Enter sends, Shift+Enter adds a line.</p>
+<p class="assistant-buttons">
 <button type="submit" id="assistant-send" class="btn">Send</button>
 <button type="button" id="assistant-mic" class="btn btn-secondary" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg> <span id="assistant-mic-label">Speak</span></button></p>
 </form>
@@ -128,6 +130,13 @@
     box.appendChild(p);
     results.appendChild(box);
   }
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (form.requestSubmit) form.requestSubmit();
+      else form.dispatchEvent(new Event('submit', {cancelable: true}));
+    }
+  });
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     confirmBox.hidden = true;

@@ -3,77 +3,96 @@
 {% block title %}Importers{% endblock %}
 
 {% block content %}
-<main class="wrap agent-wrap agent-narrow">
+<main class="wrap agent-wrap">
+<div class="card">
+<h1>Importers</h1>
+{% if messages %}
+{% for production_message in messages %}
+<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+{% endfor %}
+{% endif %}
+{% if new_code %}
+<p id="ready-msg" class="success">Importer {{ new_importer_name }} created with code <span class="mono" id="ready-code">{{ new_code }}</span>.
+<span id="ready-full" hidden>Your tracking code for {{ site_address }} is {{ new_code }}.</span></p>
+<p><button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button></p>
+{% endif %}
+</div>
 <div class="card">
 <h2>Add importer</h2>
-{% if messages %}
-{% for agent_message in messages %}
-<p class="{{ agent_message.tags }}">{{ agent_message }}</p>
-{% endfor %}
+{% if add_error %}
+<p class="error">{{ add_error }}</p>
 {% endif %}
 <form method="post" action="{% url 'agent_importer_add' %}">
 {% csrf_token %}
-<p><label for="id-name">Importer name</label>
-<input id="id-name" type="text" name="name" maxlength="200" required></p>
-<button type="submit">Add importer</button>
+<label for="id-importer-name">Importer name</label>
+<div class="imp-add-row">
+<input id="id-importer-name" type="text" name="name" maxlength="200" value="{{ add_name }}" required>
+<button type="submit" class="btn">Add importer</button>
+</div>
 </form>
 </div>
-{% if new_importer %}
-<div class="card">
-<p class="success">Added importer {{ new_importer.name }} with code <span class="mono">{{ new_importer.access_code }}</span>.</p>
-<p id="ready-msg">Your tracking code for {{ site }} is {{ new_importer.access_code }}.</p>
-<p><button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button></p>
-</div>
-{% endif %}
-<div class="card">
-<h1>Importers</h1>
-{% if importers %}
-<table class="agent-table stack-table">
-<thead>
-<tr><th>Name</th><th>Code</th><th>Active</th><th>Expires</th><th>Shipments</th><th></th><th></th><th></th></tr>
-</thead>
-<tbody>
+<div class="imp-grid">
 {% for importer in importers %}
-<tr>
-<td>{{ importer.name }}</td>
-<td class="mono">{{ importer.access_code }}</td>
-<td>{% if importer.access_active %}yes{% else %}no{% endif %}</td>
-<td>{% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y, H:i" }}{% else %}—{% endif %}</td>
-<td>{{ importer.shipment_count }}</td>
-<td><a class="btn btn-quiet" href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a></td>
-<td>
-<details>
-<summary>Edit name</summary>
-<form method="post" action="{% url 'agent_importer_rename' pk=importer.pk %}">
-{% csrf_token %}
-<p><label for="rename-{{ importer.pk }}">Importer name</label>
-<input id="rename-{{ importer.pk }}" type="text" name="name" value="{{ importer.name }}" maxlength="200" required></p>
-<button type="submit" class="small-btn">Save</button>
-</form>
-</details>
-</td>
-<td>
+<div class="card imp-card">
+<h2 class="imp-name">{{ importer.name }}</h2>
+<p class="mini-label">Access code</p>
+<p><span class="mono imp-code">{{ importer.access_code }}</span></p>
+<p><button type="button" id="ready-copy-btn-{{ importer.pk }}" class="btn btn-secondary btn-sm">Copy</button></p>
+<p id="ready-msg-{{ importer.pk }}" class="imp-status" hidden>Your tracking code for {{ site_address }} is {{ importer.access_code }}.</p>
+<p class="imp-status">Active: {% if importer.access_active %}yes{% else %}no{% endif %} · Expires: {% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y" }}{% else %}—{% endif %}</p>
+<p class="imp-status">{{ importer.shipment_count }} shipment{{ importer.shipment_count|pluralize }}</p>
+<div class="imp-actions">
+<a class="btn btn-sm" href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a>
 <form method="post" action="{% url 'agent_importer_rotate' pk=importer.pk %}">
 {% csrf_token %}
-<button type="submit" class="small-btn">Rotate code</button>
+<button type="submit" class="btn btn-secondary btn-sm">Rotate code</button>
 </form>
-</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-{% else %}
-<p>No importers yet.</p>
-{% endif %}
 </div>
-</main>
+<details class="rename">
+<summary class="btn btn-quiet">Edit name</summary>
+<form method="post" action="{% url 'agent_importer_rename' pk=importer.pk %}">
+{% csrf_token %}
+<label class="visually-hidden" for="id-rename-{{ importer.pk }}">Importer name</label>
+<div class="imp-add-row">
+<input id="id-rename-{{ importer.pk }}" type="text" name="name" maxlength="200" value="{{ importer.name }}" required>
+<button type="submit" class="btn btn-secondary btn-sm">Save</button>
+</div>
+{% if rename_errors %}
+{% for error_pk, error_text in rename_errors.items %}
+{% if error_pk == importer.pk %}
+<p class="error">{{ error_text }}</p>
+{% endif %}
+{% endfor %}
+{% endif %}
+</details>
+</div>
+{% endfor %}
+</div>
 <script>
 (function () {
-  var btn = document.getElementById('ready-copy-btn');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    navigator.clipboard.writeText(document.getElementById('ready-msg').textContent);
+  function copyText(text, ok) {
+    function done() { if (ok) ok(); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () {});
+    }
+  }
+  var main = document.getElementById('ready-copy-btn');
+  if (main) {
+    main.addEventListener('click', function () {
+      var full = document.getElementById('ready-full');
+      if (full) copyText(full.textContent);
+    });
+  }
+  var buttons = document.querySelectorAll('[id^="ready-copy-btn-"]');
+  Array.prototype.forEach.call(buttons, function (btn) {
+    btn.addEventListener('click', function () {
+      var msg = document.getElementById(
+        btn.id.replace('ready-copy-btn-', 'ready-msg-')
+      );
+      if (msg) copyText(msg.textContent);
+    });
   });
 })();
 </script>
+</main>
 {% endblock %}

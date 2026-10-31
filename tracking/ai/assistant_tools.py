@@ -168,10 +168,8 @@ def _shipment_scope(company, shipment_id):
 
 
 def _current_key(container):
-    for step in timeline_helpers.build_timeline(container):
-        if step['state'] == 'current':
-            return step['key']
-    return None
+    current = timeline_helpers.current_stage(container)
+    return current['key'] if current is not None else None
 
 
 def _container_info(container):

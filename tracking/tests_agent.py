@@ -1,3 +1,4 @@
+from datetime import timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -82,6 +83,8 @@ from .models import (
     Importer,
     Shipment,
     StaffMember,
+    Stage,
+    StageEvent,
 )
 
 
@@ -109,6 +112,47 @@ class AgentTests(TestCase):
             port='Onne',
             destination_area='Port Harcourt',
         )
+
+    def test_importer_cards(self):
+        company = self._company('Card Co')
+        self.client.force_login(self._agent(company, 'card-user'))
+        importer = self._importer(company, name='Card Foods')
+        self._shipment(importer, bl='CARDBL001')
+        response = self.client.get('/agent/importers/')
+        self.assertContains(response, 'imp-grid')
+        self.assertContains(response, 'imp-card')
+        self.assertContains(response, 'Card Foods')
+        self.assertContains(response, 'Rotate code')
+        self.assertContains(response, 'New shipment')
+        self.assertContains(response, 'Edit name')
+        self.assertContains(response, 'imp-actions')
+        css = (
+            Path(__file__).parent / 'static' / 'tracking' / 'style.css'
+        ).read_text()
+        self.assertIn('white-space: nowrap', css)
+        self.assertIn('.imp-actions .btn', css)
+
+    def test_agent_list_uses_highest_order_current(self):
+        company = self._company('Order List Co')
+        self.client.force_login(self._agent(company, 'order-list'))
+        importer = self._importer(company, name='Order Foods')
+        shipment = self._shipment(importer, bl='ORDERBL001')
+        container = Container.objects.create(
+            shipment=shipment, number='CSQU3054383', size='40ft'
+        )
+        now = timezone.now()
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=now,
+        )
+        StageEvent.objects.create(
+            container=container,
+            stage=Stage.objects.get(key='manifest_available'),
+            occurred_at=now - timedelta(days=5),
+        )
+        response = self.client.get('/agent/shipments/')
+        self.assertContains(response, 'Manifest available')
 
     def test_login_required(self):
         for url in (
@@ -375,7 +419,7 @@ class AgentTests(TestCase):
         self.client.force_login(user)
         response = self.client.get('/agent/importers/')
         self.assertContains(response, 'New shipment')
-        self.assertContains(response, '<td>1</td>')
+        self.assertContains(response, '1 shipment</p>')
         self.assertContains(
             response, '/agent/shipments/new/?importer=%d' % importer.pk
         )

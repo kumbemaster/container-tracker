@@ -151,6 +151,11 @@ class NormaliseExtractionTests(TestCase):
             'Apapa, NG': 'Apapa',
             'Aba, Abia State': 'Aba, Abia State',
             'Apapa': 'Apapa',
+            'Port Harcourt Nigeria': 'Port Harcourt',
+            'ONNE NIGERIA': 'Onne',
+            'Apapa NG': 'Apapa',
+            'Nigeria': 'Nigeria',
+            'NG': 'Ng',
         }
         for raw, expected in cases.items():
             for key in ('port_of_discharge', 'place_of_delivery'):

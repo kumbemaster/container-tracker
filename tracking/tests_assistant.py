@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -722,7 +723,8 @@ class VoiceHandlingTests(TestCase):
             self.assertContains(response, 'assistant-source')
             self.assertContains(response, 'input_source')
             self.assertContains(response, "'voice'")
-            self.assertContains(response, 'assistant-row')
+            self.assertContains(response, 'assistant-buttons')
+            self.assertContains(response, '<textarea')
 
     def test_voice_key_never_in_response_or_log(self):
         company = AgentCompany.objects.create(name='Voice Secret Co')
@@ -1229,6 +1231,41 @@ class AssistantWordingTests(TestCase):
             Path(__file__).parent / 'static' / 'tracking' / 'style.css'
         ).read_text()
         self.assertIn('.text-btn[hidden]', css)
+
+
+class AssistantCardLayoutTests(TestCase):
+    def test_textarea_and_button_row(self):
+        company = AgentCompany.objects.create(name='Card Layout Co')
+        self.client.force_login(_agent(company, 'card-layout'))
+        response = self.client.get('/agent/shipments/')
+        self.assertContains(response, '<textarea')
+        self.assertContains(response, 'id="assistant-input"')
+        self.assertContains(response, 'rows="3"')
+        self.assertContains(response, 'assistant-buttons')
+        self.assertContains(response, 'Shift+Enter')
+
+    def test_tool_current_uses_highest_order(self):
+        company = AgentCompany.objects.create(name='Tool Order Co')
+        _agent(company, 'tool-order')
+        shipment, first, _ = _shipment(company, bl='DEMOBL002')
+        now = timezone.now()
+        StageEvent.objects.create(
+            container=first,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=now,
+        )
+        StageEvent.objects.create(
+            container=first,
+            stage=Stage.objects.get(key='manifest_available'),
+            occurred_at=now - timedelta(days=5),
+        )
+        result = find_shipments(company, 'DEMOBL002')
+        self.assertTrue(result['ok'])
+        self.assertEqual(len(result['shipments']), 1)
+        self.assertEqual(
+            result['shipments'][0]['containers'][0]['current_stage'],
+            'manifest_available',
+        )
 
 
 class AssistantLoopTests(TestCase):

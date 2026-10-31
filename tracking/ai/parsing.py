@@ -97,9 +97,10 @@ def _text(value):
 def _clean_place(value):
     """Tidy a port or destination area for display.
 
-    Removes a trailing country such as ", Nigeria" or ", NG" and
-    converts all-uppercase values to title case. Mixed-case values
-    are left as they are.
+    Removes a trailing country such as ", Nigeria", ", NG" or a bare
+    " Nigeria" / " NG" word, and converts all-uppercase values to
+    title case. Mixed-case values are left as they are. A value that
+    is only a country name is never stripped.
     """
     text = _text(value)
     if text is None:
@@ -107,6 +108,11 @@ def _clean_place(value):
     text = re.sub(
         r',\s*(Nigeria|NG)\s*$', '', text, flags=re.IGNORECASE
     ).strip()
+    bare = re.sub(
+        r'\s+(Nigeria|NG)\s*$', '', text, flags=re.IGNORECASE
+    ).strip()
+    if bare:
+        text = bare
     if text.isupper():
         text = text.title()
     return text or None

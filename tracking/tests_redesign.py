@@ -100,8 +100,11 @@ class AgentRedesignTests(TestCase):
         self.assertContains(response, 'agent-menu')
         self.assertContains(response, '<summary>Menu</summary>')
         response = self.client.get('/agent/importers/')
+        self.assertNotContains(response, 'agent-narrow')
+        self.assertIn('stack-table', self._css())
+        self.assertIn('imp-actions', self._css())
+        response = self.client.get('/agent/login/')
         self.assertContains(response, 'agent-narrow')
-        self.assertContains(response, 'stack-table')
 
     def test_agent_font_floor(self):
         """No px font below 14px in agent rules, except 13px labels."""

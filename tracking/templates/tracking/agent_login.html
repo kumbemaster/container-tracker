@@ -5,6 +5,7 @@
 {% block content %}
 <main class="wrap agent-wrap agent-narrow">
 <div class="card">
+<p><a class="btn btn-secondary" href="{% url 'search' %}">← Back to tracking</a></p>
 <h1>Agent login</h1>
 {% if form.non_field_errors %}
 <p class="error">{{ form.non_field_errors }}</p>

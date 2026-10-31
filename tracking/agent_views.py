@@ -223,18 +223,12 @@ def signup(request):
 
 
 def _current_label(container):
-    steps = timeline_helpers.build_timeline(container)
-    current = next(
-        (step for step in steps if step['state'] == 'current'), None
-    )
+    current = timeline_helpers.current_stage(container)
     return current['label'] if current is not None else 'Not started'
 
 
 def _current_label_and_order(container, order_by_key):
-    steps = timeline_helpers.build_timeline(container)
-    current = next(
-        (step for step in steps if step['state'] == 'current'), None
-    )
+    current = timeline_helpers.current_stage(container)
     if current is None:
         return 'Not started', -1
     return current['label'], order_by_key.get(current['key'], -1)
@@ -972,9 +966,9 @@ def shipment_restore(request, pk):
     )
     messages.success(
         request,
-        'Shipment %s restored.' % shipment.bl_number,
+        '%s restored.' % shipment.bl_number,
     )
-    return redirect('agent_shipment_detail', pk=shipment.pk)
+    return redirect('agent_shipments')
 
 
 @agent_required

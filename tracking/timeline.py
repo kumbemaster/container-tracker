@@ -22,6 +22,29 @@ def _container_events(container):
     )
 
 
+def current_stage(container):
+    """The completed stage with the highest Stage.order, or None.
+
+    One function for the current step everywhere: the importer box and
+    timeline, the agent shipment list and detail page, and the
+    assistant tools.
+    """
+    best = None
+    for event in _container_events(container):
+        if not _is_completed(event):
+            continue
+        if best is None or event.stage.order > best.stage.order:
+            best = event
+    if best is None:
+        return None
+    return {
+        'key': best.stage.key,
+        'label': best.stage.label,
+        'state': 'current',
+        'occurred_at': best.occurred_at,
+    }
+
+
 def build_timeline(container, now=None):
     _moment(now)
     stages = list(Stage.objects.order_by('order'))
@@ -30,8 +53,9 @@ def build_timeline(container, now=None):
         event.stage.key == 'duty_paid' and _is_completed(event)
         for event in events.values()
     )
-    completed = []
-    pending = []
+    current = current_stage(container)
+    current_key = current['key'] if current is not None else None
+    steps = []
     for stage in stages:
         event = events.get(stage.id)
         if event is not None and event.skipped:
@@ -39,38 +63,36 @@ def build_timeline(container, now=None):
         if stage.is_optional and event is None:
             continue
         if event is not None and _is_completed(event):
-            completed.append((stage, event))
+            steps.append(
+                {
+                    'key': stage.key,
+                    'label': stage.label,
+                    'state': (
+                        'current'
+                        if stage.key == current_key
+                        else 'completed'
+                    ),
+                    'occurred_at': event.occurred_at,
+                }
+            )
         elif stage.is_processing_track and duty_paid_done:
-            pending.append((stage, 'processing'))
+            steps.append(
+                {
+                    'key': stage.key,
+                    'label': stage.label,
+                    'state': 'processing',
+                    'occurred_at': None,
+                }
+            )
         else:
-            pending.append((stage, 'upcoming'))
-    completed.sort(key=lambda pair: pair[1].occurred_at)
-    current_id = None
-    if completed:
-        current_stage, _ = max(
-            completed, key=lambda pair: (pair[1].occurred_at, pair[0].order)
-        )
-        current_id = current_stage.id
-    steps = []
-    for stage, event in completed:
-        steps.append(
-            {
-                'key': stage.key,
-                'label': stage.label,
-                'state': 'current' if stage.id == current_id else 'completed',
-                'occurred_at': event.occurred_at,
-            }
-        )
-    pending.sort(key=lambda item: item[0].order)
-    for stage, state in pending:
-        steps.append(
-            {
-                'key': stage.key,
-                'label': stage.label,
-                'state': state,
-                'occurred_at': None,
-            }
-        )
+            steps.append(
+                {
+                    'key': stage.key,
+                    'label': stage.label,
+                    'state': 'upcoming',
+                    'occurred_at': None,
+                }
+            )
     return steps
 
 

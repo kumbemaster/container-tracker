@@ -140,6 +140,20 @@ class SignupTests(TestCase):
         self.assertContains(signup_page, 'Already have an account? Log in')
 
 
+class AuthLinksTests(TestCase):
+    def test_login_and_signup_have_back_link(self):
+        for url in ('/agent/login/', '/agent/signup/'):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, 'Back to tracking')
+            self.assertContains(response, 'href="/"')
+
+    def test_setting_disables_signup_back_link_stays(self):
+        with override_settings(ALLOW_AGENT_SIGNUP=False):
+            response = self.client.get('/agent/login/')
+            self.assertContains(response, 'Back to tracking')
+
+
 class ShipmentDeleteTests(TestCase):
     def setUp(self):
         self.company = AgentCompany.objects.create(name='Del Co')
@@ -167,9 +181,14 @@ class ShipmentDeleteTests(TestCase):
         self.assertContains(response, 'Delete shipment')
         self.assertContains(response, 'Cancel')
         response = self.client.post(
-            '/agent/shipments/%d/delete/' % self.shipment.pk
+            '/agent/shipments/%d/delete/' % self.shipment.pk,
+            follow=True,
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Shipment DELBL001 deleted.')
+        self.assertEqual(
+            response.redirect_chain, [('/agent/shipments/', 302)]
+        )
         self.shipment.refresh_from_db()
         self.assertIsNotNone(self.shipment.deleted_at)
         self.assertTrue(
@@ -191,7 +210,7 @@ class ShipmentDeleteTests(TestCase):
             404,
         )
         response = self.client.get('/agent/importers/')
-        self.assertContains(response, '<td>0</td>')
+        self.assertContains(response, '0 shipments')
 
     def test_deleted_invisible_to_importers(self):
         verify = self.client.post(
@@ -270,9 +289,15 @@ class ShipmentDeleteTests(TestCase):
         self.assertContains(response, 'DELBL001')
         self.assertContains(response, 'Restore')
         response = self.client.post(
-            '/agent/shipments/%d/restore/' % self.shipment.pk
+            '/agent/shipments/%d/restore/' % self.shipment.pk,
+            follow=True,
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'DELBL001 restored.')
+        self.assertContains(response, 'DELBL001')
+        self.assertEqual(
+            response.redirect_chain, [('/agent/shipments/', 302)]
+        )
         self.shipment.refresh_from_db()
         self.assertIsNone(self.shipment.deleted_at)
         self.assertTrue(

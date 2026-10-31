@@ -196,11 +196,10 @@ def _container_context(container, explanations=None):
 
 def _panel_context(container, explanations=None):
     context = _container_context(container, explanations)
-    steps = context['steps']
-    current = next(
-        (step for step in steps if step['state'] == 'current'), None
+    current = timeline_helpers.current_stage(container)
+    context['current_label'] = (
+        current['label'] if current is not None else None
     )
-    context['current_label'] = current['label'] if current is not None else None
     context['open'] = False
     return context
 
