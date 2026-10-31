@@ -4,6 +4,7 @@
 
 {% block content %}
 <main class="wrap">
+{% include "tracking/_assistant.html" %}
 <div class="card compact">
 <h1 class="mono">{{ shipment.bl_number }}</h1>
 <p class="imp-line">{{ shipment.importer.name }}</p>

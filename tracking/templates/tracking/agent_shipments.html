@@ -4,6 +4,7 @@
 
 {% block content %}
 <main class="wrap">
+{% include "tracking/_assistant.html" %}
 <div class="card">
 <h1>Shipments</h1>
 <p><a href="{% url 'agent_shipment_new' %}">New shipment</a> · <a href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>

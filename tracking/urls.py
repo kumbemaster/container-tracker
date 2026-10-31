@@ -88,4 +88,19 @@ urlpatterns = [
         agent_views.document_file,
         name='agent_document',
     ),
+    path(
+        'agent/assistant/',
+        agent_views.assistant_run,
+        name='agent_assistant',
+    ),
+    path(
+        'agent/assistant/confirm/',
+        agent_views.assistant_confirm,
+        name='agent_assistant_confirm',
+    ),
+    path(
+        'agent/assistant/cancel/',
+        agent_views.assistant_cancel,
+        name='agent_assistant_cancel',
+    ),
 ]

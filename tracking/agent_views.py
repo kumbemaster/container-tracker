@@ -1,3 +1,4 @@
+import json
 import logging
 import mimetypes
 import secrets
@@ -10,7 +11,7 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Case, Count, F, Max, When
 from django.forms.utils import ErrorDict
-from django.http import FileResponse
+from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -19,6 +20,8 @@ from django.views.decorators.http import require_GET, require_POST
 from . import access as access_helpers
 from . import stage_rules
 from . import timeline as timeline_helpers
+from .ai.assistant import HISTORY_LIMIT, run_assistant
+from .ai.assistant_tools import OPTIONAL_STAGE_KEYS
 from .ai.extract_bl import extract_shipment
 from .forms import ShipmentForm, normalise_number
 from .models import (
@@ -26,6 +29,7 @@ from .models import (
     Container,
     Document,
     Importer,
+    ProposedAction,
     Shipment,
     StaffMember,
     Stage,
@@ -351,7 +355,15 @@ def _updated_ago(updated_at, now):
     return 'Updated %d %s ago' % (days, unit)
 
 
-def _log(request, shipment, container, action, old_value='', new_value=''):
+def _log(
+    request,
+    shipment,
+    container,
+    action,
+    old_value='',
+    new_value='',
+    source=AuditLog.Source.MANUAL,
+):
     AuditLog.objects.create(
         shipment=shipment,
         container=container,
@@ -359,7 +371,43 @@ def _log(request, shipment, container, action, old_value='', new_value=''):
         action=action,
         old_value=old_value,
         new_value=new_value,
+        source=source,
     )
+
+
+def _record_stage_done(
+    user,
+    shipment,
+    container,
+    stage,
+    when,
+    note,
+    source=AuditLog.Source.MANUAL,
+):
+    """Record a stage completion at the current server time.
+
+    Used by the Done button and by confirmed assistant proposals alike.
+    """
+    with transaction.atomic():
+        event, created = StageEvent.objects.get_or_create(
+            container=container,
+            stage=stage,
+            defaults={'occurred_at': when, 'note': note},
+        )
+        old_value = '' if created else str(event.occurred_at)
+        event.occurred_at = when
+        event.skipped = False
+        event.note = note
+        event.save()
+        AuditLog.objects.create(
+            shipment=shipment,
+            container=container,
+            user=user,
+            action='stage_completed',
+            old_value=old_value,
+            new_value=str(when),
+            source=source,
+        )
 
 
 @agent_required
@@ -383,25 +431,9 @@ def stage_update(request, pk):
                 % (stage.label, container.number, ' '.join(problems)),
             )
             continue
-        with transaction.atomic():
-            event, created = StageEvent.objects.get_or_create(
-                container=container,
-                stage=stage,
-                defaults={'occurred_at': when, 'note': note},
-            )
-            old_value = '' if created else str(event.occurred_at)
-            event.occurred_at = when
-            event.skipped = False
-            event.note = note
-            event.save()
-            _log(
-                request,
-                shipment,
-                container,
-                'stage_completed',
-                old_value=old_value,
-                new_value=str(when),
-            )
+        _record_stage_done(
+            request.user, shipment, container, stage, when, note
+        )
         messages.success(
             request, 'Recorded %s for %s.' % (stage.label, container.number)
         )
@@ -794,3 +826,255 @@ def importer_rename(request, pk):
             request, 'Renamed importer to %s.' % importer.name
         )
     return redirect('agent_importers')
+
+
+def _assistant_history_text(result):
+    kind = result.get('type')
+    if kind == 'proposal':
+        return 'Proposed:\n' + '\n'.join(result.get('summary') or [])
+    if kind == 'question':
+        return result.get('question', '')
+    return result.get('text', '')
+
+
+@agent_required
+@require_POST
+def assistant_run(request):
+    try:
+        payload = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse(
+            {'type': 'message', 'text': 'That request was not valid.'},
+            status=400,
+        )
+    if not isinstance(payload, dict):
+        return JsonResponse(
+            {'type': 'message', 'text': 'That request was not valid.'},
+            status=400,
+        )
+    text = payload.get('text', '')
+    history = request.session.get('assistant_history', [])
+    if not isinstance(history, list):
+        history = []
+    result = run_assistant(request.user, text, history)
+    history = history + [
+        {'role': 'user', 'content': (text or '')[:500]},
+        {'role': 'assistant', 'content': _assistant_history_text(result)},
+    ]
+    request.session['assistant_history'] = history[-HISTORY_LIMIT:]
+    return JsonResponse(result)
+
+
+def _scoped_proposal(request, proposal_id):
+    try:
+        pk = int(proposal_id)
+    except (TypeError, ValueError):
+        return None
+    return ProposedAction.objects.filter(
+        pk=pk, company=request.agent_company
+    ).first()
+
+
+def _apply_assistant_item(request, company, item, now, recorded, refused):
+    kind = item.get('kind')
+    shipment = Shipment.objects.filter(
+        pk=item.get('shipment_id'), importer__agent_company=company
+    ).first()
+    if shipment is None:
+        refused.append('Shipment not found for one item.')
+        return
+    container = shipment.containers.filter(
+        number__iexact=(item.get('container_number') or '').strip()
+    ).first()
+    if container is None:
+        refused.append(
+            'No container %s on %s.'
+            % (item.get('container_number'), shipment.bl_number)
+        )
+        return
+    if kind == 'stage_done':
+        stage = Stage.objects.filter(key=item.get('stage_key')).first()
+        if stage is None:
+            refused.append(
+                'Unknown stage for %s.' % container.number
+            )
+            return
+        problems = stage_rules.check_can_complete(container, stage, now)
+        if problems:
+            refused.append(
+                'Refused %s for %s: %s'
+                % (stage.label, container.number, '; '.join(problems))
+            )
+            return
+        _record_stage_done(
+            request.user,
+            shipment,
+            container,
+            stage,
+            now,
+            '',
+            source=AuditLog.Source.ASSISTANT,
+        )
+        recorded.append(
+            'Recorded %s for %s.' % (stage.label, container.number)
+        )
+    elif kind == 'select_optional':
+        stage = Stage.objects.filter(
+            key=item.get('stage_key'), is_optional=True
+        ).first()
+        if stage is None or stage.key not in OPTIONAL_STAGE_KEYS:
+            refused.append(
+                'Unknown optional stage for %s.' % container.number
+            )
+            return
+        if StageEvent.objects.filter(
+            container=container, stage=stage
+        ).exists():
+            refused.append(
+                '%s is already recorded or selected for %s.'
+                % (stage.label, container.number)
+            )
+            return
+        StageEvent.objects.create(container=container, stage=stage)
+        _log(
+            request,
+            shipment,
+            container,
+            'stage_selected',
+            new_value=stage.label,
+            source=AuditLog.Source.ASSISTANT,
+        )
+        recorded.append(
+            'Selected %s for %s.' % (stage.label, container.number)
+        )
+    elif kind == 'waiting_on':
+        waiting_on = item.get('waiting_on', '')
+        note = (item.get('note') or '').strip()
+        valid = [choice[0] for choice in Container.WaitingOn.choices]
+        if waiting_on not in valid:
+            refused.append(
+                'Unknown waiting status for %s.' % container.number
+            )
+            return
+        old_value = container.waiting_on
+        container.waiting_on = waiting_on
+        if waiting_on == Container.WaitingOn.NOBODY:
+            container.waiting_on_since = None
+            container.waiting_on_note = ''
+        else:
+            container.waiting_on_since = now
+            container.waiting_on_note = note
+        container.save()
+        _log(
+            request,
+            shipment,
+            container,
+            'waiting_changed',
+            old_value=old_value,
+            new_value=('%s — %s' % (waiting_on, note))
+            if note
+            else waiting_on,
+            source=AuditLog.Source.ASSISTANT,
+        )
+        recorded.append(
+            'Updated waiting status for %s.' % container.number
+        )
+    else:
+        refused.append('Unknown change for %s.' % container.number)
+
+
+@agent_required
+@require_POST
+def assistant_confirm(request):
+    try:
+        payload = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse(
+            {'ok': False, 'error': 'That request was not valid.'},
+            status=400,
+        )
+    proposal = _scoped_proposal(request, (payload or {}).get('proposal_id'))
+    if proposal is None:
+        return JsonResponse(
+            {'ok': False, 'error': 'Proposal not found.'}, status=404
+        )
+    if proposal.user_id != request.user.pk:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'Only the agent who created this proposal '
+                'can confirm it.',
+            },
+            status=400,
+        )
+    if proposal.status != ProposedAction.Status.PENDING:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'This proposal has already been %s.'
+                % (proposal.status,),
+            },
+            status=400,
+        )
+    if proposal.is_expired():
+        proposal.status = ProposedAction.Status.EXPIRED
+        proposal.save(update_fields=['status'])
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'This proposal has expired. '
+                'Ask the assistant again.',
+            },
+            status=400,
+        )
+    now = timezone.now()
+    recorded, refused = [], []
+    for item in proposal.actions or []:
+        _apply_assistant_item(
+            request, request.agent_company, item, now, recorded, refused
+        )
+    proposal.status = ProposedAction.Status.CONFIRMED
+    proposal.save(update_fields=['status'])
+    request.session.pop('assistant_history', None)
+    return JsonResponse(
+        {'ok': True, 'recorded': recorded, 'refused': refused}
+    )
+
+
+@agent_required
+@require_POST
+def assistant_cancel(request):
+    try:
+        payload = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse(
+            {'ok': False, 'error': 'That request was not valid.'},
+            status=400,
+        )
+    proposal = _scoped_proposal(request, (payload or {}).get('proposal_id'))
+    if proposal is None:
+        return JsonResponse(
+            {'ok': False, 'error': 'Proposal not found.'}, status=404
+        )
+    if proposal.user_id != request.user.pk:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'Only the agent who created this proposal '
+                'can cancel it.',
+            },
+            status=400,
+        )
+    if proposal.status != ProposedAction.Status.PENDING:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'This proposal has already been %s.'
+                % (proposal.status,),
+            },
+            status=400,
+        )
+    proposal.status = ProposedAction.Status.CANCELLED
+    proposal.save(update_fields=['status'])
+    request.session.pop('assistant_history', None)
+    return JsonResponse({'ok': True})

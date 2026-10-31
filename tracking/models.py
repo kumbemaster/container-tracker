@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -157,7 +159,38 @@ class StaffMember(models.Model):
         return f'{self.user.username} ({self.agent_company})'
 
 
+class ProposedAction(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        CONFIRMED = 'confirmed', 'Confirmed'
+        CANCELLED = 'cancelled', 'Cancelled'
+        EXPIRED = 'expired', 'Expired'
+
+    EXPIRY = timedelta(minutes=10)
+
+    company = models.ForeignKey(AgentCompany, on_delete=models.CASCADE)
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    summary = models.TextField()
+    actions = models.JSONField(default=list)
+    transcript = models.TextField(blank=True, default='')
+
+    def is_expired(self, now=None):
+        now = now or timezone.now()
+        return now - self.created_at > self.EXPIRY
+
+    def __str__(self):
+        return f'Proposal {self.pk} ({self.status})'
+
+
 class AuditLog(models.Model):
+    class Source(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+        ASSISTANT = 'assistant', 'Assistant'
+
     shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE)
     container = models.ForeignKey(
         Container, null=True, blank=True, on_delete=models.SET_NULL
@@ -166,6 +199,9 @@ class AuditLog(models.Model):
     action = models.CharField(max_length=100)
     old_value = models.TextField(blank=True, default='')
     new_value = models.TextField(blank=True, default='')
+    source = models.CharField(
+        max_length=20, choices=Source.choices, default=Source.MANUAL
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

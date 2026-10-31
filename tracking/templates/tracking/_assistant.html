@@ -1,0 +1,93 @@
+<div class="card" id="assistant-card">
+<h2>Tell the assistant what happened</h2>
+<p class="help">The assistant is an AI model. Check each proposal before you confirm.</p>
+<form id="assistant-form">
+<p><label for="assistant-input" class="visually-hidden">What happened</label>
+<input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
+<button type="submit" id="assistant-send">Send</button></p>
+</form>
+<div id="assistant-results" aria-live="polite"></div>
+<div id="assistant-confirm" hidden>
+<h3>Confirm these changes</h3>
+<ul id="assistant-summary"></ul>
+<p><button type="button" id="assistant-confirm-btn">Confirm</button>
+<button type="button" id="assistant-cancel-btn" class="small-btn">Cancel</button></p>
+</div>
+</div>
+<script>
+(function () {
+  var card = document.getElementById('assistant-card');
+  if (!card) return;
+  var form = document.getElementById('assistant-form');
+  var input = document.getElementById('assistant-input');
+  var results = document.getElementById('assistant-results');
+  var confirmBox = document.getElementById('assistant-confirm');
+  var summary = document.getElementById('assistant-summary');
+  var proposalId = null;
+  function csrfToken() {
+    var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function post(url, data) {
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken()
+      },
+      body: JSON.stringify(data)
+    }).then(function (response) { return response.json(); });
+  }
+  function showText(text) {
+    results.textContent = '';
+    var p = document.createElement('p');
+    p.textContent = text;
+    results.appendChild(p);
+  }
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    confirmBox.hidden = true;
+    proposalId = null;
+    showText('Thinking…');
+    post('/agent/assistant/', {text: input.value}).then(function (result) {
+      if (result.type === 'proposal') {
+        proposalId = result.id;
+        summary.textContent = '';
+        result.summary.forEach(function (line) {
+          var li = document.createElement('li');
+          li.textContent = line;
+          summary.appendChild(li);
+        });
+        showText('The assistant proposes:');
+        confirmBox.hidden = false;
+      } else if (result.type === 'question') {
+        showText(result.question);
+      } else {
+        showText(result.text || 'Nothing to propose.');
+      }
+    });
+  });
+  document.getElementById('assistant-confirm-btn').addEventListener('click', function () {
+    if (!proposalId) return;
+    post('/agent/assistant/confirm/', {proposal_id: proposalId}).then(function (result) {
+      confirmBox.hidden = true;
+      proposalId = null;
+      var lines = [];
+      (result.recorded || []).forEach(function (line) { lines.push(line); });
+      (result.refused || []).forEach(function (line) { lines.push(line); });
+      if (result.ok && !lines.length) lines.push('Nothing was recorded.');
+      if (!result.ok && result.error) lines.push(result.error);
+      showText(lines.join(' '));
+    });
+  });
+  document.getElementById('assistant-cancel-btn').addEventListener('click', function () {
+    if (!proposalId) return;
+    post('/agent/assistant/cancel/', {proposal_id: proposalId}).then(function () {
+      confirmBox.hidden = true;
+      proposalId = null;
+      showText('Proposal cancelled.');
+    });
+  });
+})();
+</script>
