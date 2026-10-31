@@ -2,11 +2,13 @@ import json
 import logging
 import mimetypes
 import secrets
+import struct
 from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.views import LoginView
+from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Case, Count, F, Max, When
@@ -24,6 +26,7 @@ from . import timeline as timeline_helpers
 from .ai.assistant import HISTORY_LIMIT, run_assistant
 from .ai import assistant_tools
 from .ai.extract_bl import extract_shipment
+from .ai.transcribe import transcribe_audio
 from .forms import ShipmentForm, normalise_number
 from .models import (
     AuditLog,
@@ -1080,3 +1083,55 @@ def assistant_cancel(request):
     proposal.save(update_fields=['status'])
     request.session.pop('assistant_history', None)
     return JsonResponse({'ok': True})
+
+
+TRANSCRIBE_MAX_BYTES = 2 * 1024 * 1024
+TRANSCRIBE_DAILY_LIMIT = 100
+TRANSCRIBE_FRIENDLY = 'We could not hear that. Please type it instead.'
+
+
+def _wav_is_valid(data):
+    """Check RIFF/WAVE bytes for mono 16-bit PCM at 24000 Hz."""
+    if len(data) < 44 or data[0:4] != b'RIFF' or data[8:12] != b'WAVE':
+        return False
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk = data[offset:offset + 4]
+        size = struct.unpack('<I', data[offset + 4:offset + 8])[0]
+        body = data[offset + 8:offset + 8 + size]
+        if chunk == b'fmt ' and len(body) >= 16:
+            audio_format, channels, rate, _, _, bits = struct.unpack(
+                '<HHIIHH', body[:16]
+            )
+            return (
+                audio_format == 1
+                and channels == 1
+                and rate == 24000
+                and bits == 16
+            )
+        offset += 8 + size + (size % 2)
+    return False
+
+
+@agent_required
+@require_POST
+def assistant_transcribe(request):
+    upload = request.FILES.get('audio')
+    data = upload.read() if upload is not None else b''
+    if not data or len(data) > TRANSCRIBE_MAX_BYTES or not _wav_is_valid(
+        data
+    ):
+        return JsonResponse({'error': TRANSCRIBE_FRIENDLY}, status=400)
+    key = 'assistant-transcribe:%d:%s' % (
+        request.user.pk, timezone.localdate().isoformat()
+    )
+    count = cache.get(key, 0)
+    if count >= TRANSCRIBE_DAILY_LIMIT:
+        return JsonResponse({'error': TRANSCRIBE_FRIENDLY}, status=429)
+    try:
+        text = transcribe_audio(data)
+    except Exception:
+        logger.warning('assistant transcribe failed')
+        return JsonResponse({'error': TRANSCRIBE_FRIENDLY}, status=502)
+    cache.set(key, count + 1, 24 * 60 * 60)
+    return JsonResponse({'text': text})

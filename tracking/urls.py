@@ -113,4 +113,9 @@ urlpatterns = [
         agent_views.assistant_cancel,
         name='agent_assistant_cancel',
     ),
+    path(
+        'agent/assistant/transcribe/',
+        agent_views.assistant_transcribe,
+        name='agent_assistant_transcribe',
+    ),
 ]

@@ -4,8 +4,11 @@
 <form id="assistant-form">
 <p><label for="assistant-input" class="visually-hidden">What happened</label>
 <input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
-<button type="submit" id="assistant-send">Send</button></p>
+<button type="submit" id="assistant-send">Send</button>
+<button type="button" id="assistant-mic" class="small-btn" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg></button></p>
 </form>
+<p id="assistant-voice-status" role="status" aria-live="polite"></p>
+<p class="help">Voice is transcribed by an AI model. Check the text before sending.</p>
 <div id="assistant-results" aria-live="polite"></div>
 <div id="assistant-confirm" hidden>
 <h3>Confirm these changes</h3>
@@ -88,6 +91,141 @@
       proposalId = null;
       showText('Proposal cancelled.');
     });
+  });
+})();
+(function () {
+  var mic = document.getElementById('assistant-mic');
+  var status = document.getElementById('assistant-voice-status');
+  var input = document.getElementById('assistant-input');
+  if (!mic || !status || !input) return;
+  function csrfToken() {
+    var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function noMic() {
+    mic.style.display = 'none';
+    status.textContent = 'Microphone not available. Please type it.';
+  }
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+        (window.AudioContext || window.webkitAudioContext))) {
+    noMic();
+    return;
+  }
+  var recording = null;
+  function flatten(chunks) {
+    var total = 0, i;
+    for (i = 0; i < chunks.length; i++) total += chunks[i].length;
+    var out = new Float32Array(total);
+    var offset = 0;
+    for (i = 0; i < chunks.length; i++) {
+      out.set(chunks[i], offset);
+      offset += chunks[i].length;
+    }
+    return out;
+  }
+  function resample(data, fromRate, toRate) {
+    if (fromRate === toRate) return data;
+    var ratio = fromRate / toRate;
+    var out = new Float32Array(Math.floor(data.length / ratio));
+    for (var i = 0; i < out.length; i++) {
+      var pos = i * ratio;
+      var index = Math.floor(pos);
+      var frac = pos - index;
+      var a = data[index] || 0;
+      var b = data[index + 1] || 0;
+      out[i] = a + (b - a) * frac;
+    }
+    return out;
+  }
+  function encodeWav(samples, sampleRate) {
+    var buffer = new ArrayBuffer(44 + samples.length * 2);
+    var view = new DataView(buffer);
+    function writeString(offset, text) {
+      for (var i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+    }
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    for (var i = 0; i < samples.length; i++) {
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+  }
+  function stopRecording() {
+    var rec = recording;
+    recording = null;
+    if (!rec) return;
+    clearInterval(rec.timer);
+    clearTimeout(rec.stopTimer);
+    mic.setAttribute('aria-pressed', 'false');
+    status.textContent = 'Transcribing...';
+    var samples = resample(flatten(rec.chunks), rec.inputRate, 24000);
+    var wav = encodeWav(samples, 24000);
+    try { rec.processor.disconnect(); } catch (e) {}
+    rec.stream.getTracks().forEach(function (track) { track.stop(); });
+    try { rec.ctx.close(); } catch (e) {}
+    var form = new FormData();
+    form.append('audio', new Blob([wav], {type: 'audio/wav'}), 'recording.wav');
+    fetch('/agent/assistant/transcribe/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'X-CSRFToken': csrfToken()},
+      body: form
+    }).then(function (response) { return response.json(); }).then(function (result) {
+      if (result.text) {
+        input.value = result.text;
+        input.focus();
+        status.textContent = '';
+      } else {
+        status.textContent = result.error || 'We could not hear that. Please type it instead.';
+      }
+    }).catch(function () {
+      status.textContent = 'We could not hear that. Please type it instead.';
+    });
+  }
+  function startRecording() {
+    navigator.mediaDevices.getUserMedia({audio: true}).then(function (stream) {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      var ctx = new Ctx();
+      var source = ctx.createMediaStreamSource(stream);
+      var processor = ctx.createScriptProcessor(4096, 1, 1);
+      var mute = ctx.createGain();
+      mute.gain.value = 0;
+      var chunks = [];
+      processor.onaudioprocess = function (e) {
+        chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(ctx.destination);
+      var startTime = Date.now();
+      status.textContent = 'Listening... 0:00';
+      var timer = setInterval(function () {
+        var secs = Math.floor((Date.now() - startTime) / 1000);
+        status.textContent = 'Listening... 0:' + (secs < 10 ? '0' : '') + secs;
+      }, 250);
+      var stopTimer = setTimeout(stopRecording, 30000);
+      mic.setAttribute('aria-pressed', 'true');
+      recording = {
+        ctx: ctx, stream: stream, processor: processor, chunks: chunks,
+        inputRate: ctx.sampleRate, timer: timer, stopTimer: stopTimer
+      };
+    }).catch(function () { noMic(); });
+  }
+  mic.addEventListener('click', function () {
+    if (recording) stopRecording();
+    else startRecording();
   });
 })();
 </script>

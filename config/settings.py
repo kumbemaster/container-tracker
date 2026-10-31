@@ -137,6 +137,7 @@ META_API_BASE_URL = os.environ.get(
 )
 META_MODEL = os.environ.get('META_MODEL', 'muse-spark-1.3')
 META_API_KEY = os.environ.get('MODEL_API_KEY', '')
+META_ASR_MODE = os.environ.get('META_ASR_MODE', 'PUSH_TO_TALK')
 
 # Private upload storage. Files under MEDIA_ROOT are served only through
 # the company-checked document view, never through static or media URLs.
