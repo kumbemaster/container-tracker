@@ -10,14 +10,17 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from .ai.assistant import (
+    COMMON_MISHEARINGS,
     SYSTEM_INSTRUCTION,
     UNAVAILABLE_MESSAGE,
+    VOICE_INSTRUCTION,
     run_assistant,
 )
 from .ai.assistant_tools import (
     ask_clarification,
     find_shipments,
     get_shipment,
+    normalise_spoken_query,
     propose_add_optional_stage,
     propose_stage_done,
     propose_waiting_on,
@@ -508,7 +511,7 @@ class AssistantToolsTests(TestCase):
         )
         self.assertNotIn('access_code', json.dumps(result))
 
-    def test_find_shipments_at_most_five(self):
+    def test_find_shipments_at_most_three(self):
         company = AgentCompany.objects.create(name='Assist Many')
         importer = Importer.objects.create(
             agent_company=company, name='Shared Name', access_code='123456'
@@ -522,7 +525,7 @@ class AssistantToolsTests(TestCase):
                 destination_area='Port Harcourt',
             )
         result = find_shipments(company, 'Shared Name')
-        self.assertEqual(len(result['shipments']), 5)
+        self.assertEqual(len(result['shipments']), 3)
 
     def test_find_shows_containers_without_codes(self):
         company = AgentCompany.objects.create(name='Assist Show')
@@ -595,6 +598,500 @@ class AssistantToolsTests(TestCase):
     def test_ask_clarification(self):
         result = ask_clarification('Which BL?')
         self.assertEqual(result['question'], 'Which BL?')
+
+
+class VoiceHandlingTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_normalise_spoken_query(self):
+        self.assertEqual(
+            normalise_spoken_query('DEMOBL zero zero two'), 'DEMOBL002'
+        )
+        self.assertEqual(
+            normalise_spoken_query('demo b l oh oh two'), 'DEMOBL002'
+        )
+        self.assertEqual(normalise_spoken_query('demobl002'), 'DEMOBL002')
+        self.assertEqual(
+            normalise_spoken_query('demo double oh one'), 'DEMO001'
+        )
+        self.assertEqual(
+            normalise_spoken_query('triple two'), '222'
+        )
+
+    def test_find_shipments_spoken_variants(self):
+        company = AgentCompany.objects.create(name='Voice Find Co')
+        _shipment(company, bl='DEMOBL002')
+        for query in (
+            'DEMOBL zero zero two',
+            'demo b l oh oh two',
+            'demobl002',
+        ):
+            result = find_shipments(company, query)
+            self.assertTrue(result['ok'])
+            self.assertEqual(len(result['shipments']), 1)
+            self.assertEqual(
+                result['shipments'][0]['bl_number'], 'DEMOBL002'
+            )
+
+    def test_find_shipments_returns_at_most_three(self):
+        company = AgentCompany.objects.create(name='Voice Three Co')
+        importer = Importer.objects.create(
+            agent_company=company, name='Voice Name', access_code='123456'
+        )
+        for number in range(5):
+            Shipment.objects.create(
+                importer=importer,
+                bl_number='VOICE%d' % number,
+                shipping_line='Line',
+                port='Onne',
+                destination_area='Port Harcourt',
+            )
+        result = find_shipments(company, 'Voice Name')
+        self.assertTrue(result['ok'])
+        self.assertLessEqual(len(result['shipments']), 3)
+
+    def test_mishearings_constant_covers_duty_paar_manifest(self):
+        joined = ' '.join(
+            heard + ' ' + meaning for heard, meaning in COMMON_MISHEARINGS
+        ).lower()
+        for word in ('deux types', 'duty', 'par', 'paar', 'manifesto',
+                     'manifest'):
+            self.assertIn(word, joined)
+
+    def _system_content(self, user, **kwargs):
+        client = _fake_client([_model_response(content='Nothing yet.')])
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            run_assistant(user, 'duty paid', [], **kwargs)
+        return client.chat.completions.create.call_args[1]['messages'][0][
+            'content'
+        ]
+
+    def test_voice_instruction_only_for_voice(self):
+        company = AgentCompany.objects.create(name='Voice Inst Co')
+        user = _agent(company, 'voice-inst')
+        voice_content = self._system_content(user, input_source='voice')
+        self.assertIn('mishearings', voice_content)
+        self.assertIn(
+            'I read "deux types paid" as "duty paid."', voice_content
+        )
+        self.assertIn('zero zero two', voice_content)
+        for kwargs in ({}, {'input_source': 'typed'}):
+            typed_content = self._system_content(user, **kwargs)
+            self.assertNotIn('mishearings', typed_content)
+            self.assertIn('Stage keys and', typed_content)
+
+    def test_endpoint_passes_input_source(self):
+        company = AgentCompany.objects.create(name='Voice Post Co')
+        user = _agent(company, 'voice-poster')
+        self.client.force_login(user)
+        with patch(
+            'tracking.agent_views.run_assistant',
+            return_value={'type': 'message', 'text': 'ok'},
+        ) as assistant:
+            response = self.client.post(
+                '/agent/assistant/',
+                json.dumps(
+                    {'text': 'duty paid', 'input_source': 'voice'}
+                ),
+                content_type='application/json',
+            )
+        self.assertEqual(response.status_code, 200)
+        _, kwargs = assistant.call_args
+        self.assertEqual(kwargs.get('input_source'), 'voice')
+        with patch(
+            'tracking.agent_views.run_assistant',
+            return_value={'type': 'message', 'text': 'ok'},
+        ) as assistant:
+            self.client.post(
+                '/agent/assistant/',
+                json.dumps({'text': 'duty paid'}),
+                content_type='application/json',
+            )
+        _, kwargs = assistant.call_args
+        self.assertEqual(kwargs.get('input_source'), 'typed')
+
+    def test_page_sends_input_source(self):
+        company = AgentCompany.objects.create(name='Voice Page Src Co')
+        self.client.force_login(_agent(company, 'voice-src-page'))
+        for url in ('/agent/shipments/',):
+            response = self.client.get(url)
+            self.assertContains(response, 'assistant-source')
+            self.assertContains(response, 'input_source')
+            self.assertContains(response, "'voice'")
+            self.assertContains(response, 'assistant-row')
+
+    def test_voice_key_never_in_response_or_log(self):
+        company = AgentCompany.objects.create(name='Voice Secret Co')
+        user = _agent(company, 'voice-secret')
+        client = _fake_client([Exception('boom')])
+        with override_settings(META_API_KEY='sentinel-key-xyz'):
+            with patch(
+                'tracking.ai.assistant.get_client', return_value=client
+            ):
+                with self.assertLogs(
+                    'tracking.ai.assistant', level='WARNING'
+                ) as logs:
+                    result = run_assistant(
+                        user, 'hello', [], input_source='voice'
+                    )
+        self.assertNotIn('sentinel-key-xyz', json.dumps(result))
+        self.assertNotIn(
+            'sentinel-key-xyz', '\n'.join(logs.output)
+        )
+
+
+class PageContextTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _context(self, shipment, focused=None):
+        return {
+            'shipment_id': shipment.pk,
+            'bl_number': shipment.bl_number,
+            'importer_name': shipment.importer.name,
+            'container_numbers': list(
+                shipment.containers.order_by('number').values_list(
+                    'number', flat=True
+                )
+            ),
+            'focused_container': focused,
+        }
+
+    def _complete(self, shipment, user, *keys):
+        for key in keys:
+            self.assertIsNone(
+                shipment_stages.complete_shipment_stage(
+                    shipment, Stage.objects.get(key=key), user, 'manual'
+                )
+            )
+
+    def _system_content(self, user, **kwargs):
+        client = _fake_client([_model_response(content='Nothing yet.')])
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            run_assistant(user, 'duty paid', [], **kwargs)
+        return client.chat.completions.create.call_args[1]['messages'][0][
+            'content'
+        ]
+
+    def test_instruction_names_viewed_shipment(self):
+        company = AgentCompany.objects.create(name='Page Co')
+        user = _agent(company, 'page-user')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        content = self._system_content(
+            user, page_context=self._context(shipment, 'CSQU3054383')
+        )
+        self.assertIn(
+            'currently viewing shipment DEMOBL002', content
+        )
+        self.assertIn('Tool Importer', content)
+        self.assertIn('has container CSQU3054383 in focus', content)
+        self.assertIn('use that one instead of the page', content)
+        self.assertIn(
+            'Never ask which shipment the agent means', content
+        )
+
+    def test_instruction_without_focus_and_without_context(self):
+        company = AgentCompany.objects.create(name='Page Plain Co')
+        user = _agent(company, 'page-plain-user')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        content = self._system_content(
+            user, page_context=self._context(shipment)
+        )
+        self.assertIn('currently viewing shipment DEMOBL002', content)
+        self.assertNotIn('has container', content)
+        plain = self._system_content(user)
+        self.assertNotIn('currently viewing', plain)
+
+    def test_viewed_duty_paid_proposes_without_question(self):
+        company = AgentCompany.objects.create(name='Page Duty Co')
+        user = _agent(company, 'page-duty')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self._complete(
+            shipment, user, 'arrived_at_port', 'manifest_available',
+            'paar_assessed',
+        )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': shipment.pk,
+                                'stage_key': 'duty_paid',
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Proposing duty paid.'),
+            ]
+        )
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            result = run_assistant(
+                user, 'duty paid', [],
+                page_context=self._context(shipment),
+            )
+        self.assertEqual(result['type'], 'proposal')
+        self.assertEqual(
+            result['summary'],
+            ['Mark Duty paid done for DEMOBL002 (all 2 containers).'],
+        )
+
+    def test_safety_net_fills_focused_container(self):
+        company = AgentCompany.objects.create(name='Page Focus Co')
+        user = _agent(company, 'page-focus')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self._complete(
+            shipment, user, 'arrived_at_port', 'manifest_available',
+            'paar_assessed', 'duty_paid',
+        )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': shipment.pk,
+                                'stage_key': 'shipping_line_processed',
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Proposing.'),
+            ]
+        )
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            result = run_assistant(
+                user, 'shipping line done', [],
+                page_context=self._context(shipment, 'CSQU3054383'),
+            )
+        self.assertEqual(result['type'], 'proposal')
+        self.assertEqual(len(result['summary']), 1)
+        self.assertIn('CSQU3054383', result['summary'][0])
+        self.assertNotIn('DEMO4416733', result['summary'][0])
+
+    def test_safety_net_ignores_other_shipment(self):
+        company = AgentCompany.objects.create(name='Page Other Co')
+        user = _agent(company, 'page-other')
+        shipment, _, _ = _shipment(
+            company, importer_name='Page Importer', bl='DEMOBL002'
+        )
+        other_importer = Importer.objects.create(
+            agent_company=company, name='Other Importer',
+            access_code='999999',
+        )
+        other = Shipment.objects.create(
+            importer=other_importer,
+            bl_number='OTHERBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        Container.objects.create(
+            shipment=other, number='CSQU3054383', size='40ft'
+        )
+        Container.objects.create(
+            shipment=other, number='DEMO4416733', size='20ft'
+        )
+        for target in (shipment, other):
+            self._complete(
+                target, user, 'arrived_at_port', 'manifest_available',
+                'paar_assessed', 'duty_paid',
+            )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': other.pk,
+                                'stage_key': 'shipping_line_processed',
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Proposing.'),
+            ]
+        )
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            result = run_assistant(
+                user, 'shipping line done for OTHERBL001', [],
+                page_context=self._context(shipment, 'CSQU3054383'),
+            )
+        self.assertEqual(result['type'], 'proposal')
+        self.assertEqual(len(result['summary']), 2)
+        for line in result['summary']:
+            self.assertIn('OTHERBL001', line)
+
+    def test_shipment_wide_stage_ignores_focus(self):
+        company = AgentCompany.objects.create(name='Page Wide Co')
+        user = _agent(company, 'page-wide')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self._complete(
+            shipment, user, 'arrived_at_port', 'manifest_available',
+            'paar_assessed',
+        )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': shipment.pk,
+                                'stage_key': 'duty_paid',
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Proposing duty paid.'),
+            ]
+        )
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            result = run_assistant(
+                user, 'duty paid', [],
+                page_context=self._context(shipment, 'CSQU3054383'),
+            )
+        self.assertEqual(
+            result['summary'],
+            ['Mark Duty paid done for DEMOBL002 (all 2 containers).'],
+        )
+
+    def test_endpoint_validates_context(self):
+        company = AgentCompany.objects.create(name='Page Post Co')
+        user = _agent(company, 'page-poster')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self.client.force_login(user)
+        with patch(
+            'tracking.agent_views.run_assistant',
+            return_value={'type': 'message', 'text': 'ok'},
+        ) as assistant:
+            response = self.client.post(
+                '/agent/assistant/',
+                json.dumps(
+                    {
+                        'text': 'duty paid',
+                        'context': {
+                            'shipment_id': shipment.pk,
+                            'container_number': 'CSQU3054383',
+                        },
+                    }
+                ),
+                content_type='application/json',
+            )
+        self.assertEqual(response.status_code, 200)
+        _, kwargs = assistant.call_args
+        page = kwargs.get('page_context')
+        self.assertEqual(page['bl_number'], 'DEMOBL002')
+        self.assertEqual(page['importer_name'], 'Tool Importer')
+        self.assertEqual(page['focused_container'], 'CSQU3054383')
+
+    def test_endpoint_ignores_foreign_shipment(self):
+        company_a = AgentCompany.objects.create(name='Page Post A')
+        company_b = AgentCompany.objects.create(name='Page Post B')
+        user = _agent(company_a, 'page-poster-b')
+        _, _, _ = _shipment(company_a, bl='DEMOBL002')
+        foreign, _, _ = _shipment(
+            company_b, importer_name='Foreign Imp', bl='FOREIGNBL001'
+        )
+        self.client.force_login(user)
+        with patch(
+            'tracking.agent_views.run_assistant',
+            return_value={'type': 'message', 'text': 'ok'},
+        ) as assistant:
+            self.client.post(
+                '/agent/assistant/',
+                json.dumps(
+                    {
+                        'text': 'duty paid',
+                        'context': {'shipment_id': foreign.pk},
+                    }
+                ),
+                content_type='application/json',
+            )
+        _, kwargs = assistant.call_args
+        self.assertIsNone(kwargs.get('page_context'))
+
+    def test_endpoint_ignores_unknown_container(self):
+        company = AgentCompany.objects.create(name='Page Post C')
+        user = _agent(company, 'page-poster-c')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self.client.force_login(user)
+        with patch(
+            'tracking.agent_views.run_assistant',
+            return_value={'type': 'message', 'text': 'ok'},
+        ) as assistant:
+            self.client.post(
+                '/agent/assistant/',
+                json.dumps(
+                    {
+                        'text': 'duty paid',
+                        'context': {
+                            'shipment_id': shipment.pk,
+                            'container_number': 'NOPE1234567',
+                        },
+                    }
+                ),
+                content_type='application/json',
+            )
+        _, kwargs = assistant.call_args
+        page = kwargs.get('page_context')
+        self.assertEqual(page['bl_number'], 'DEMOBL002')
+        self.assertIsNone(page['focused_container'])
+
+    def test_detail_page_has_applies_to_list_does_not(self):
+        company = AgentCompany.objects.create(name='Page Line Co')
+        user = _agent(company, 'page-line')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        self.client.force_login(user)
+        response = self.client.get(
+            '/agent/shipments/%d/' % shipment.pk
+        )
+        self.assertContains(response, 'Applies to:')
+        self.assertContains(response, 'DEMOBL002')
+        self.assertContains(response, 'id="assistant-scope"')
+        self.assertContains(response, 'assistant-scope-clear')
+        response = self.client.get('/agent/shipments/')
+        self.assertNotContains(response, 'Applies to:')
+        self.assertNotContains(response, 'id="assistant-scope"')
+
+    def test_page_context_key_never_in_response_or_log(self):
+        company = AgentCompany.objects.create(name='Page Secret Co')
+        user = _agent(company, 'page-secret')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        client = _fake_client([Exception('boom')])
+        with override_settings(META_API_KEY='sentinel-key-xyz'):
+            with patch(
+                'tracking.ai.assistant.get_client', return_value=client
+            ):
+                with self.assertLogs(
+                    'tracking.ai.assistant', level='WARNING'
+                ) as logs:
+                    result = run_assistant(
+                        user, 'hello', [],
+                        page_context=self._context(
+                            shipment, 'CSQU3054383'
+                        ),
+                    )
+        self.assertNotIn('sentinel-key-xyz', json.dumps(result))
+        self.assertNotIn(
+            'sentinel-key-xyz', '\n'.join(logs.output)
+        )
 
 
 class AssistantLoopTests(TestCase):

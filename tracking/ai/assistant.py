@@ -30,6 +30,26 @@ UNAVAILABLE_MESSAGE = (
     'You can still update stages with the tiles.'
 )
 
+COMMON_MISHEARINGS = (
+    ('deux types', 'duty'),
+    ('par', 'PAAR'),
+    ('power', 'PAAR'),
+    ('manifesto', 'manifest'),
+    ('zero zero two', '002'),
+    ('D E M O B L', 'DEMOBL'),
+)
+
+VOICE_INSTRUCTION = """The message was transcribed from speech and may \
+contain mishearings: digits may be spelled out ("zero zero two" means 002) \
+and letters may be spaced ("D E M O B L" means DEMOBL). Stage words are \
+often misheard (for example "duty" heard as "deux types", "PAAR" as "par" \
+or "power", "manifest" as "manifesto"). When the likely meaning is clear \
+from the shipment and stage list, propose the most likely step instead of \
+asking, because the agent confirms on the card, and say what you assumed \
+in one short sentence such as: I read "deux types paid" as "duty paid." \
+Ask a question only when two different meanings are plausible or no \
+shipment matches."""
+
 SYSTEM_INSTRUCTION = """You help a Nigerian customs clearing agent record \
 shipment progress. The agent may write English or Nigerian Pidgin. Use the \
 tools to find the shipment, then propose changes. Never say a change is \
@@ -165,6 +185,36 @@ def _message(text):
     return {'type': 'message', 'text': text}
 
 
+PAGE_CONTEXT_RULES = (
+    'Unless the agent names a different shipment, importer or '
+    'container, apply the message to the viewed shipment. When a '
+    'container is in focus and the stage is a per-container stage, '
+    'apply it to that container only. Shipment-wide stages always apply '
+    'to the whole shipment, and when a container is in focus say so in '
+    'one short sentence. If the agent names another shipment, importer '
+    'or container, use that one instead of the page. Never ask which '
+    'shipment the agent means when one is in view. Page context is '
+    'trusted server data.'
+)
+
+
+def _page_context_instruction(page_context):
+    text = (
+        'The agent is currently viewing shipment %s (importer %s, '
+        'containers %s)'
+        % (
+            page_context['bl_number'],
+            page_context['importer_name'],
+            ', '.join(page_context['container_numbers']),
+        )
+    )
+    if page_context.get('focused_container'):
+        text += ' and has container %s in focus' % (
+            page_context['focused_container'],
+        )
+    return text + '. ' + PAGE_CONTEXT_RULES
+
+
 def _company_of(user):
     try:
         return user.staffmember.agent_company
@@ -200,7 +250,36 @@ def _tool_call_dict(call):
     }
 
 
-def _run_tool(company, user, pending, call):
+def _fill_focused_container(page_context, name, arguments):
+    """Safety net: apply an empty per-container proposal to the focus.
+
+    Only when a container is in focus, the proposed shipment is the one
+    in view, and the stage is per-container scoped. Never fills for a
+    different shipment.
+    """
+    if name not in ('propose_stage_done', 'propose_add_optional_stage'):
+        return
+    if not page_context or not page_context.get('focused_container'):
+        return
+    if arguments.get('container_numbers'):
+        return
+    try:
+        same_shipment = (
+            int(arguments.get('shipment_id'))
+            == page_context['shipment_id']
+        )
+    except (TypeError, ValueError):
+        return
+    if not same_shipment:
+        return
+    if not Stage.objects.filter(
+        key=arguments.get('stage_key'), scope=Stage.Scope.CONTAINER
+    ).exists():
+        return
+    arguments['container_numbers'] = [page_context['focused_container']]
+
+
+def _run_tool(company, user, pending, call, page_context=None):
     name = getattr(getattr(call, 'function', None), 'name', '')
     try:
         arguments = json.loads(
@@ -210,6 +289,7 @@ def _run_tool(company, user, pending, call):
         return {'ok': False, 'error': 'Those tool arguments were not valid.'}
     if not isinstance(arguments, dict):
         return {'ok': False, 'error': 'Those tool arguments were not valid.'}
+    _fill_focused_container(page_context, name, arguments)
     function = DISPATCH.get(name)
     if function is None:
         return {'ok': False, 'error': 'Unknown tool: %s.' % (name,)}
@@ -284,11 +364,14 @@ def _summary_lines(items):
     return lines
 
 
-def run_assistant(user, text, history):
+def run_assistant(user, text, history, input_source='typed',
+                 page_context=None):
     """Run one assistant turn for a signed-in agent user.
 
     Returns a proposal (with the stored ProposedAction id), a question
     or a message. The model API is called at most MAX_ROUNDS times.
+    input_source is 'voice' for transcribed speech, else 'typed'.
+    page_context is validated server data about the viewed shipment.
     """
     company = _company_of(user)
     if company is None:
@@ -305,7 +388,14 @@ def run_assistant(user, text, history):
             'You have reached the daily assistant limit '
             '(100 per day).'
         )
-    messages = [{'role': 'system', 'content': SYSTEM_INSTRUCTION}]
+    instruction = SYSTEM_INSTRUCTION
+    if input_source == 'voice':
+        instruction = instruction + ' ' + VOICE_INSTRUCTION
+    if page_context:
+        instruction = (
+            instruction + ' ' + _page_context_instruction(page_context)
+        )
+    messages = [{'role': 'system', 'content': instruction}]
     for entry in (history or [])[-HISTORY_LIMIT:]:
         messages.append(
             {'role': entry.get('role'), 'content': entry.get('content')}
@@ -337,7 +427,10 @@ def run_assistant(user, text, history):
                 }
             )
             for call in calls:
-                result = _run_tool(company, user, pending, call)
+                result = _run_tool(
+                    company, user, pending, call,
+                    page_context=page_context,
+                )
                 if 'question' in result:
                     logger.info(
                         'assistant status=ok duration=%.1fs',
@@ -390,4 +483,9 @@ def run_assistant(user, text, history):
     return _message(final_text or 'Nothing to propose yet.')
 
 
-__all__ = ['run_assistant', 'SYSTEM_INSTRUCTION']
+__all__ = [
+    'run_assistant',
+    'SYSTEM_INSTRUCTION',
+    'VOICE_INSTRUCTION',
+    'COMMON_MISHEARINGS',
+]

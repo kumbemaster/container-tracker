@@ -1,14 +1,17 @@
 <div class="card" id="assistant-card">
 <h2>Tell the assistant what happened</h2>
 <p class="help">The assistant is an AI model. Check each proposal before you confirm.</p>
+{% if assistant_bl %}<p class="help" id="assistant-scope" data-shipment-id="{{ assistant_shipment_id }}" data-bl="{{ assistant_bl }}">Applies to: <span class="mono">{{ assistant_bl }}</span><span id="assistant-scope-container" hidden> · <span class="mono" id="assistant-scope-number"></span></span> <button type="button" id="assistant-scope-clear" class="small-btn" hidden>Clear</button></p>{% endif %}
 <form id="assistant-form">
-<p><label for="assistant-input" class="visually-hidden">What happened</label>
+<p class="assistant-row"><label for="assistant-input" class="visually-hidden">What happened</label>
 <input id="assistant-input" type="text" name="text" maxlength="500" placeholder="For example: duty paid for DEMOBL001" autocomplete="off">
+<input type="hidden" id="assistant-source" name="input_source" value="typed">
 <button type="submit" id="assistant-send">Send</button>
-<button type="button" id="assistant-mic" class="small-btn" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg></button></p>
+<button type="button" id="assistant-mic" class="small-btn" aria-label="Record voice message" aria-pressed="false"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="6" y="1" width="4" height="8" rx="2" fill="currentColor"/><path d="M4 7a4 4 0 0 0 8 0" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="11" x2="8" y2="14" stroke="currentColor" stroke-width="1.5"/></svg> <span id="assistant-mic-label">Speak</span></button></p>
 </form>
 <p id="assistant-voice-status" role="status" aria-live="polite"></p>
-<p class="help">Voice is transcribed by an AI model. Check the text before sending.</p>
+<p class="help">Voice is transcribed by an AI model. Check what it heard before you confirm.</p>
+<p id="assistant-heard" hidden></p>
 <div id="assistant-results" aria-live="polite"></div>
 <div id="assistant-confirm" hidden>
 <h3>Confirm these changes</h3>
@@ -23,10 +26,65 @@
   if (!card) return;
   var form = document.getElementById('assistant-form');
   var input = document.getElementById('assistant-input');
+  var source = document.getElementById('assistant-source');
   var results = document.getElementById('assistant-results');
   var confirmBox = document.getElementById('assistant-confirm');
   var summary = document.getElementById('assistant-summary');
   var proposalId = null;
+  var scope = document.getElementById('assistant-scope');
+  var scopeContainer = document.getElementById('assistant-scope-container');
+  var scopeNumber = document.getElementById('assistant-scope-number');
+  var scopeClear = document.getElementById('assistant-scope-clear');
+  var focusDropped = false;
+  function openContainerBoxes() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll('details.row.abox[open]')
+    );
+  }
+  function focusedContainer() {
+    if (!scope || focusDropped) return null;
+    var open = openContainerBoxes();
+    if (open.length !== 1) return null;
+    var num = open[0].querySelector('.abox-number');
+    return num ? num.textContent.trim() : null;
+  }
+  function pageContext() {
+    if (!scope) return null;
+    return {
+      shipment_id: parseInt(
+        scope.getAttribute('data-shipment-id'), 10
+      ),
+      container_number: focusedContainer()
+    };
+  }
+  function refreshScope() {
+    if (!scope || !scopeContainer || !scopeNumber || !scopeClear) return;
+    var focused = focusedContainer();
+    if (focused) {
+      scopeNumber.textContent = focused;
+      scopeContainer.hidden = false;
+      scopeClear.hidden = false;
+    } else {
+      scopeContainer.hidden = true;
+      scopeClear.hidden = true;
+    }
+  }
+  if (scope) {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('details.row.abox'),
+      function (box) {
+        box.addEventListener('toggle', function () {
+          focusDropped = false;
+          refreshScope();
+        });
+      }
+    );
+    if (scopeClear) scopeClear.addEventListener('click', function () {
+      focusDropped = true;
+      refreshScope();
+    });
+    refreshScope();
+  }
   function csrfToken() {
     var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : '';
@@ -53,7 +111,13 @@
     confirmBox.hidden = true;
     proposalId = null;
     showText('Thinking…');
-    post('/agent/assistant/', {text: input.value}).then(function (result) {
+    var data = {
+      text: input.value,
+      input_source: (source && source.value === 'voice') ? 'voice' : 'typed'
+    };
+    var context = pageContext();
+    if (context) data.context = context;
+    post('/agent/assistant/', data).then(function (result) {
       if (result.type === 'proposal') {
         proposalId = result.id;
         summary.textContent = '';
@@ -95,9 +159,25 @@
 })();
 (function () {
   var mic = document.getElementById('assistant-mic');
+  var micLabel = document.getElementById('assistant-mic-label');
+  var heard = document.getElementById('assistant-heard');
+  var voiceForm = document.getElementById('assistant-form');
   var status = document.getElementById('assistant-voice-status');
   var input = document.getElementById('assistant-input');
-  if (!mic || !status || !input) return;
+  if (!mic || !micLabel || !heard || !voiceForm || !status || !input) return;
+  var autoSubmit = false;
+  var FRIENDLY = 'We could not hear that. Please type it instead.';
+  var TOO_SHORT = 'Too short, try again.';
+  var state = 'idle'; // idle | recording | transcribing | error
+  var recording = null; // {stream, recorder, chunks, token} while recording
+  var session = 0; // invalidates late microphone arrivals
+  var stopTimer = null; // 30 s auto-stop, armed at press time
+  var watchdog = null; // 31.5 s backstop, calls forceReset
+  var displayTimer = null;
+  var startTime = 0;
+  function debug(msg) {
+    if (window.console && window.console.debug) window.console.debug(msg);
+  }
   function csrfToken() {
     var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : '';
@@ -107,35 +187,73 @@
     status.textContent = 'Microphone not available. Please type it.';
   }
   if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
-        (window.AudioContext || window.webkitAudioContext))) {
+        (window.AudioContext || window.webkitAudioContext) && window.MediaRecorder &&
+        (window.OfflineAudioContext || window.webkitOfflineAudioContext))) {
     noMic();
     return;
   }
-  var recording = null;
-  function flatten(chunks) {
-    var total = 0, i;
-    for (i = 0; i < chunks.length; i++) total += chunks[i].length;
-    var out = new Float32Array(total);
-    var offset = 0;
-    for (i = 0; i < chunks.length; i++) {
-      out.set(chunks[i], offset);
-      offset += chunks[i].length;
-    }
-    return out;
+  function setStatus(text) {
+    status.textContent = text;
   }
-  function resample(data, fromRate, toRate) {
-    if (fromRate === toRate) return data;
-    var ratio = fromRate / toRate;
-    var out = new Float32Array(Math.floor(data.length / ratio));
-    for (var i = 0; i < out.length; i++) {
-      var pos = i * ratio;
-      var index = Math.floor(pos);
-      var frac = pos - index;
-      var a = data[index] || 0;
-      var b = data[index + 1] || 0;
-      out[i] = a + (b - a) * frac;
+  function clearStopTimers() {
+    if (stopTimer) {
+      clearTimeout(stopTimer);
+      stopTimer = null;
     }
-    return out;
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = null;
+    }
+  }
+  function setState(next) {
+    debug('voice: state ' + next);
+    state = next;
+    if (next === 'idle') clearStopTimers();
+    if (next === 'recording') {
+      mic.disabled = false;
+      micLabel.textContent = 'Stop';
+      mic.classList.add('mic-live');
+      mic.setAttribute('aria-pressed', 'true');
+    } else if (next === 'transcribing') {
+      mic.disabled = true;
+      micLabel.textContent = 'Transcribing...';
+      mic.classList.remove('mic-live');
+      mic.setAttribute('aria-pressed', 'false');
+    } else { // idle or error: button usable again, message stays visible
+      mic.disabled = false;
+      micLabel.textContent = 'Speak';
+      mic.classList.remove('mic-live');
+      mic.setAttribute('aria-pressed', 'false');
+    }
+  }
+  function stopTracks(stream) {
+    try {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  function renderWav(decoded) {
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    var length = Math.max(1, Math.floor(decoded.duration * 24000));
+    var offline = new OC(1, length, 24000);
+    var src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offline.destination);
+    src.start(0);
+    return offline.startRendering().then(function (rendered) {
+      return encodeWav(rendered.getChannelData(0), 24000);
+    });
+  }
+  function postAudio(wav) {
+    var form = new FormData();
+    form.append('audio', new Blob([wav], {type: 'audio/wav'}), 'recording.wav');
+    return fetch('/agent/assistant/transcribe/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'X-CSRFToken': csrfToken()},
+      body: form
+    }).then(function (response) { return response.json(); });
   }
   function encodeWav(samples, sampleRate) {
     var buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -162,70 +280,195 @@
     }
     return buffer;
   }
+  function startDisplayTimer() {
+    startTime = Date.now();
+    setStatus('Listening... 0:00');
+    displayTimer = setInterval(function () {
+      var secs = Math.floor((Date.now() - startTime) / 1000);
+      var rest = secs % 60;
+      setStatus('Listening... ' + Math.floor(secs / 60) + ':' +
+        (rest < 10 ? '0' : '') + rest);
+    }, 250);
+  }
+  function stopDisplayTimer() {
+    if (displayTimer) {
+      clearInterval(displayTimer);
+      displayTimer = null;
+    }
+  }
+  // The single stop path for the second click and the 30-second timer.
+  // The state guard makes it run only once.
   function stopRecording() {
+    if (state !== 'recording') return;
+    debug('voice: stop');
     var rec = recording;
     recording = null;
-    if (!rec) return;
-    clearInterval(rec.timer);
-    clearTimeout(rec.stopTimer);
-    mic.setAttribute('aria-pressed', 'false');
-    status.textContent = 'Transcribing...';
-    var samples = resample(flatten(rec.chunks), rec.inputRate, 24000);
-    var wav = encodeWav(samples, 24000);
-    try { rec.processor.disconnect(); } catch (e) {}
-    rec.stream.getTracks().forEach(function (track) { track.stop(); });
-    try { rec.ctx.close(); } catch (e) {}
-    var form = new FormData();
-    form.append('audio', new Blob([wav], {type: 'audio/wav'}), 'recording.wav');
-    fetch('/agent/assistant/transcribe/', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {'X-CSRFToken': csrfToken()},
-      body: form
-    }).then(function (response) { return response.json(); }).then(function (result) {
-      if (result.text) {
-        input.value = result.text;
-        input.focus();
-        status.textContent = '';
-      } else {
-        status.textContent = result.error || 'We could not hear that. Please type it instead.';
+    stopDisplayTimer();
+    setState('transcribing');
+    setStatus('Transcribing...');
+    if (!rec) {
+      setStatus('');
+      setState('idle');
+      return;
+    }
+    try {
+      rec.recorder.stop();
+    } catch (err) {
+      console.error(err);
+      stopTracks(rec.stream);
+      setStatus(FRIENDLY);
+      setState('idle');
+      return;
+    }
+    try {
+      rec.stream.getTracks().forEach(function (track) { track.stop(); });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  function handleStop(rec) {
+    if (!rec || rec.token !== session) {
+      debug('voice: stale stop ignored');
+      return;
+    }
+    (async function () {
+      var ctx = null;
+      try {
+        var blob = new Blob(rec.chunks, {
+          type: (rec.chunks[0] && rec.chunks[0].type) || 'audio/webm'
+        });
+        var bytes = await blob.arrayBuffer();
+        var AC = window.AudioContext || window.webkitAudioContext;
+        ctx = new AC();
+        var decoded;
+        try {
+          decoded = await ctx.decodeAudioData(bytes);
+        } finally {
+          try { ctx.close(); } catch (e) {}
+          ctx = null;
+        }
+        if (!decoded || decoded.duration < 0.5) {
+          debug('voice: too short');
+          setStatus(TOO_SHORT);
+          return;
+        }
+        var wav = await renderWav(decoded);
+        var result = await postAudio(wav);
+        if (result && result.text && result.text.trim()) {
+          heard.textContent = 'I heard: \u201C' + result.text.trim() + '\u201D';
+          heard.hidden = false;
+          input.value = result.text;
+          input.focus();
+          setStatus('');
+          debug('voice: upload ok');
+          autoSubmit = true;
+          var sourceField = document.getElementById('assistant-source');
+          try {
+            if (sourceField) sourceField.value = 'voice';
+            if (voiceForm.requestSubmit) voiceForm.requestSubmit();
+            else voiceForm.dispatchEvent(new Event('submit', {cancelable: true}));
+          } finally {
+            autoSubmit = false;
+            if (sourceField) sourceField.value = 'typed';
+          }
+          debug('voice: auto submit');
+        } else {
+          setStatus((result && result.error) || FRIENDLY);
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus(FRIENDLY);
+        setState('error');
+      } finally {
+        setState('idle');
       }
-    }).catch(function () {
-      status.textContent = 'We could not hear that. Please type it instead.';
+    })();
+  }
+  function forceReset() {
+    debug('voice: watchdog reset');
+    session += 1;
+    var rec = recording;
+    recording = null;
+    stopDisplayTimer();
+    if (rec) stopTracks(rec.stream);
+    setStatus(FRIENDLY);
+    setState('idle');
+  }
+  function watchdogCheck() {
+    if (state === 'recording' || state === 'transcribing') forceReset();
+  }
+  function cancel() {
+    if (state !== 'recording') return;
+    debug('voice: cancel');
+    session += 1;
+    var rec = recording;
+    recording = null;
+    stopDisplayTimer();
+    if (rec) stopTracks(rec.stream);
+    setStatus('');
+    setState('idle');
+  }
+  function start() {
+    if (state !== 'idle') return;
+    var my = ++session;
+    setState('recording');
+    startDisplayTimer();
+    stopTimer = setTimeout(stopRecording, 60000);
+    watchdog = setTimeout(watchdogCheck, 61500);
+    navigator.mediaDevices.getUserMedia({audio: true}).then(function (stream) {
+      if (my !== session || state !== 'recording') {
+        stopTracks(stream);
+        return;
+      }
+      var recorder;
+      try {
+        recorder = new MediaRecorder(stream);
+      } catch (err) {
+        console.error(err);
+        session += 1;
+        stopTracks(stream);
+        stopDisplayTimer();
+        setStatus(FRIENDLY);
+        setState('idle');
+        return;
+      }
+      var chunks = [];
+      recorder.ondataavailable = function (e) {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      var rec = {stream: stream, recorder: recorder, chunks: chunks, token: my};
+      recorder.onstop = function () { handleStop(rec); };
+      recording = rec;
+      try {
+        recorder.start();
+      } catch (err) {
+        console.error(err);
+        session += 1;
+        recording = null;
+        stopTracks(stream);
+        stopDisplayTimer();
+        setStatus(FRIENDLY);
+        setState('idle');
+      }
+    }).catch(function (err) {
+      if (my !== session) return;
+      session += 1;
+      stopDisplayTimer();
+      setState('idle');
+      console.error(err);
+      noMic();
     });
   }
-  function startRecording() {
-    navigator.mediaDevices.getUserMedia({audio: true}).then(function (stream) {
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      var ctx = new Ctx();
-      var source = ctx.createMediaStreamSource(stream);
-      var processor = ctx.createScriptProcessor(4096, 1, 1);
-      var mute = ctx.createGain();
-      mute.gain.value = 0;
-      var chunks = [];
-      processor.onaudioprocess = function (e) {
-        chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-      };
-      source.connect(processor);
-      processor.connect(mute);
-      mute.connect(ctx.destination);
-      var startTime = Date.now();
-      status.textContent = 'Listening... 0:00';
-      var timer = setInterval(function () {
-        var secs = Math.floor((Date.now() - startTime) / 1000);
-        status.textContent = 'Listening... 0:' + (secs < 10 ? '0' : '') + secs;
-      }, 250);
-      var stopTimer = setTimeout(stopRecording, 30000);
-      mic.setAttribute('aria-pressed', 'true');
-      recording = {
-        ctx: ctx, stream: stream, processor: processor, chunks: chunks,
-        inputRate: ctx.sampleRate, timer: timer, stopTimer: stopTimer
-      };
-    }).catch(function () { noMic(); });
-  }
   mic.addEventListener('click', function () {
-    if (recording) stopRecording();
-    else startRecording();
+    debug('voice: click state=' + state);
+    if (state === 'recording') stopRecording();
+    else if (state === 'idle') start();
+  });
+  voiceForm.addEventListener('submit', function () {
+    if (!autoSubmit) heard.hidden = true;
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') cancel();
   });
 })();
 </script>

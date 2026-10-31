@@ -804,7 +804,7 @@ class RenderedFormTests(TestCase):
         response = self._detail()
         html = response.content.decode()
         self.assertEqual(html.count('tile-menu'), 3)
-        self.assertEqual(html.count('disabled'), 3)
+        self.assertEqual(html.count('disabled>'), 3)
         self.assertEqual(html.count('>Add</button>'), 2)
 
     def test_no_time_inputs_on_page(self):

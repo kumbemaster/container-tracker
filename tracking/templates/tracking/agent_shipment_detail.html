@@ -4,7 +4,7 @@
 
 {% block content %}
 <main class="wrap">
-{% include "tracking/_assistant.html" %}
+{% include "tracking/_assistant.html" with assistant_bl=shipment.bl_number assistant_shipment_id=shipment.pk %}
 <div class="card compact">
 <h1 class="mono">{{ shipment.bl_number }}</h1>
 <p class="imp-line">{{ shipment.importer.name }}</p>

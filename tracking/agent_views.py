@@ -936,6 +936,49 @@ def _assistant_history_text(result):
     return result.get('text', '')
 
 
+def _validated_page_context(company, context):
+    """Validate the assistant page context against company data.
+
+    Any invalid part is silently ignored: a shipment outside this
+    company drops the whole context, a container outside the shipment
+    drops only the focus.
+    """
+    if not isinstance(context, dict):
+        return None
+    try:
+        shipment_id = int(context.get('shipment_id'))
+    except (TypeError, ValueError):
+        return None
+    shipment = (
+        Shipment.objects.filter(
+            pk=shipment_id, importer__agent_company=company
+        )
+        .select_related('importer')
+        .first()
+    )
+    if shipment is None:
+        return None
+    numbers = list(
+        shipment.containers.order_by('number').values_list(
+            'number', flat=True
+        )
+    )
+    focused = context.get('container_number')
+    match = None
+    if isinstance(focused, str):
+        for number in numbers:
+            if number.upper() == focused.strip().upper():
+                match = number
+                break
+    return {
+        'shipment_id': shipment.pk,
+        'bl_number': shipment.bl_number,
+        'importer_name': shipment.importer.name,
+        'container_numbers': numbers,
+        'focused_container': match,
+    }
+
+
 @agent_required
 @require_POST
 def assistant_run(request):
@@ -952,10 +995,19 @@ def assistant_run(request):
             status=400,
         )
     text = payload.get('text', '')
+    input_source = payload.get('input_source', 'typed')
+    if input_source != 'voice':
+        input_source = 'typed'
     history = request.session.get('assistant_history', [])
     if not isinstance(history, list):
         history = []
-    result = run_assistant(request.user, text, history)
+    page_context = _validated_page_context(
+        request.agent_company, payload.get('context')
+    )
+    result = run_assistant(
+        request.user, text, history, input_source=input_source,
+        page_context=page_context,
+    )
     history = history + [
         {'role': 'user', 'content': (text or '')[:500]},
         {'role': 'assistant', 'content': _assistant_history_text(result)},
@@ -1085,7 +1137,7 @@ def assistant_cancel(request):
     return JsonResponse({'ok': True})
 
 
-TRANSCRIBE_MAX_BYTES = 2 * 1024 * 1024
+TRANSCRIBE_MAX_BYTES = 4 * 1024 * 1024
 TRANSCRIBE_DAILY_LIMIT = 100
 TRANSCRIBE_FRIENDLY = 'We could not hear that. Please type it instead.'
 
@@ -1129,7 +1181,7 @@ def assistant_transcribe(request):
     if count >= TRANSCRIBE_DAILY_LIMIT:
         return JsonResponse({'error': TRANSCRIBE_FRIENDLY}, status=429)
     try:
-        text = transcribe_audio(data)
+        text = transcribe_audio(data, request.agent_company)
     except Exception:
         logger.warning('assistant transcribe failed')
         return JsonResponse({'error': TRANSCRIBE_FRIENDLY}, status=502)

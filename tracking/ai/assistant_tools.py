@@ -5,6 +5,8 @@ the model never supplies a company or user argument, and no tool
 result ever includes an access code.
 """
 
+import re
+
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -20,11 +22,83 @@ from ..models import (
     StageEvent,
 )
 
-MAX_SHIPMENTS = 5
+MAX_SHIPMENTS = 3
 OPTIONAL_STAGE_KEYS = (
     'customs_examination',
     'en_route_to_bonded_terminal',
 )
+
+SPOKEN_DIGITS = {
+    'ZERO': '0',
+    'ONE': '1',
+    'TWO': '2',
+    'THREE': '3',
+    'FOUR': '4',
+    'FIVE': '5',
+    'SIX': '6',
+    'SEVEN': '7',
+    'EIGHT': '8',
+    'NINE': '9',
+}
+SPOKEN_MULTIPLIERS = {
+    'DOUBLE': 2,
+    'TRIPLE': 3,
+}
+
+
+def _spoken_digit(token):
+    if token in SPOKEN_DIGITS:
+        return SPOKEN_DIGITS[token]
+    if token.isdigit():
+        return token
+    return None
+
+
+def _is_digit_like(token):
+    return (
+        token in SPOKEN_DIGITS
+        or token in SPOKEN_MULTIPLIERS
+        or token == 'OH'
+        or token.isdigit()
+    )
+
+
+def normalise_spoken_query(query):
+    """Compact a typed or transcribed query for matching.
+
+    Uppercases, removes spaces and converts spoken digit words to
+    digits ('oh' only when next to digits, plus double/triple), so
+    'DEMOBL zero zero two', 'demo b l oh oh two' and 'DEMOBL002'
+    all become 'DEMOBL002'.
+    """
+    tokens = re.findall(r'[A-Z0-9]+', (query or '').upper())
+    parts = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in SPOKEN_MULTIPLIERS and index + 1 < len(tokens):
+            following = tokens[index + 1]
+            digit = _spoken_digit(following)
+            if digit is None and following == 'OH':
+                digit = '0'
+            if digit is not None:
+                parts.append(digit * SPOKEN_MULTIPLIERS[token])
+                index += 2
+                continue
+        if token in SPOKEN_DIGITS:
+            parts.append(SPOKEN_DIGITS[token])
+        elif token == 'OH' and (
+            (index > 0 and _is_digit_like(tokens[index - 1]))
+            or (
+                index + 1 < len(tokens)
+                and _is_digit_like(tokens[index + 1])
+            )
+        ):
+            parts.append('0')
+        else:
+            parts.append(token)
+        index += 1
+    return ''.join(parts)
 
 
 def _error(message):
@@ -91,7 +165,8 @@ def find_shipments(company, query):
             'Say which shipment you mean: a BL number, '
             'a container number or an importer name.'
         )
-    compact = text.replace(' ', '').replace('-', '')
+    compact = text.upper().replace(' ', '').replace('-', '')
+    spoken = normalise_spoken_query(text)
     shipments = (
         Shipment.objects.filter(
             importer__agent_company=company, closed_at__isnull=True
@@ -102,7 +177,10 @@ def find_shipments(company, query):
             Q(importer__name__icontains=text)
             | Q(bl_number__icontains=text)
             | Q(containers__number__icontains=text)
+            | Q(bl_number__icontains=compact)
             | Q(containers__number__icontains=compact)
+            | Q(bl_number__icontains=spoken)
+            | Q(containers__number__icontains=spoken)
         )
         .distinct()
         .order_by('-created_at')[:MAX_SHIPMENTS]

@@ -14,8 +14,13 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from .ai.client import MissingAPIKeyError
-from .ai.transcribe import TranscriptionError, transcribe_audio
-from .models import AgentCompany, Document, StaffMember
+from .ai.transcribe import (
+    STATIC_KEYWORDS,
+    TranscriptionError,
+    build_keywords,
+    transcribe_audio,
+)
+from .models import AgentCompany, Document, Importer, Shipment, StaffMember
 
 VOICE_MEDIA_ROOT = tempfile.mkdtemp(prefix='voice-test-media')
 FRIENDLY = 'We could not hear that. Please type it instead.'
@@ -202,6 +207,192 @@ class TranscribeAudioTests(TestCase):
         self.assertNotIn('sentinel-key-xyz', '\n'.join(logs.output))
 
 
+class TranscribeHintsTests(TestCase):
+    def _send(self, replies):
+        calls = []
+
+        def fake_send(url, body, headers):
+            calls.append((url, body, headers))
+            return replies.pop(0)
+
+        return calls, fake_send
+
+    def _payload(self, body):
+        return json.loads(
+            body[body.index(b'{'):body.rindex(b'}') + 1]
+        )
+
+    def _company(self, name, importer_name='Hint Importer',
+                 bl='HINTBL001'):
+        company = AgentCompany.objects.create(name=name)
+        importer = Importer.objects.create(
+            agent_company=company, name=importer_name,
+            access_code='123456',
+        )
+        Shipment.objects.create(
+            importer=importer,
+            bl_number=bl,
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        return company
+
+    def test_request_includes_keywords_and_language_bias(self):
+        company = self._company('Hints Co')
+        calls, fake_send = self._send([ok_response()])
+        with patch(
+            'tracking.ai.transcribe._send', side_effect=fake_send
+        ):
+            with override_settings(META_API_KEY='k'):
+                self.assertEqual(
+                    transcribe_audio(wav_bytes(), company), 'duty paid'
+                )
+        payload = self._payload(calls[0][1])
+        self.assertEqual(payload['mode'], 'PUSH_TO_TALK')
+        self.assertEqual(payload['languageBias'], ['English'])
+        self.assertIn('duty paid', payload['keywords'])
+        self.assertIn('Hint Importer', payload['keywords'])
+        self.assertIn('HINTBL001', payload['keywords'])
+
+    def test_keywords_scoped_to_company(self):
+        company = self._company(
+            'Hints Own Co', importer_name='Alpha Goods', bl='ABL001'
+        )
+        other = AgentCompany.objects.create(name='Hints Other Co')
+        other_importer = Importer.objects.create(
+            agent_company=other, name='Beta Goods', access_code='654321'
+        )
+        Shipment.objects.create(
+            importer=other_importer,
+            bl_number='BBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        keywords = build_keywords(company)
+        self.assertIn('Alpha Goods', keywords)
+        self.assertIn('ABL001', keywords)
+        self.assertNotIn('Beta Goods', keywords)
+        self.assertNotIn('BBL001', keywords)
+
+    def test_closed_shipments_excluded(self):
+        company = self._company(
+            'Hints Closed Co', importer_name='Closed Imp', bl='OPEN001'
+        )
+        importer = company.importer_set.get()
+        Shipment.objects.create(
+            importer=importer,
+            bl_number='CLOSED001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+            closed_at=timezone.now(),
+        )
+        keywords = build_keywords(company)
+        self.assertIn('OPEN001', keywords)
+        self.assertNotIn('CLOSED001', keywords)
+
+    def test_keywords_capped_at_40_static_first(self):
+        company = AgentCompany.objects.create(name='Hints Cap Co')
+        long_name = 'L' * 41
+        Importer.objects.create(
+            agent_company=company, name=long_name, access_code='111111'
+        )
+        for number in range(30):
+            importer = Importer.objects.create(
+                agent_company=company,
+                name='Cap Importer %d' % number,
+                access_code='222222',
+            )
+            Shipment.objects.create(
+                importer=importer,
+                bl_number='CAPBL%03d' % number,
+                shipping_line='Line',
+                port='Onne',
+                destination_area='Port Harcourt',
+            )
+        keywords = build_keywords(company)
+        self.assertEqual(len(keywords), 40)
+        self.assertEqual(keywords[:len(STATIC_KEYWORDS)], STATIC_KEYWORDS)
+        self.assertNotIn(long_name, keywords)
+        self.assertEqual(len(set(keywords)), 40)
+
+    def test_400_with_hints_retries_once_without(self):
+        company = self._company('Hints Retry Co')
+        calls, fake_send = self._send([(400, b'bad'), ok_response()])
+        with patch(
+            'tracking.ai.transcribe._send', side_effect=fake_send
+        ):
+            with override_settings(META_API_KEY='k'):
+                self.assertEqual(
+                    transcribe_audio(wav_bytes(), company), 'duty paid'
+                )
+        self.assertEqual(len(calls), 2)
+        first = self._payload(calls[0][1])
+        self.assertIn('keywords', first)
+        self.assertIn('languageBias', first)
+        second = self._payload(calls[1][1])
+        self.assertNotIn('keywords', second)
+        self.assertNotIn('languageBias', second)
+        self.assertEqual(second['mode'], 'PUSH_TO_TALK')
+
+    def test_400_twice_with_hints_raises(self):
+        company = self._company('Hints Retry Fail Co')
+        calls, fake_send = self._send([(400, b'bad'), (400, b'bad')])
+        with patch(
+            'tracking.ai.transcribe._send', side_effect=fake_send
+        ):
+            with override_settings(META_API_KEY='k'):
+                with self.assertRaises(TranscriptionError):
+                    transcribe_audio(wav_bytes(), company)
+        self.assertEqual(len(calls), 2)
+
+    def test_hints_disabled_sends_neither(self):
+        company = self._company('Hints Off Co')
+        calls, fake_send = self._send([ok_response()])
+        with patch(
+            'tracking.ai.transcribe._send', side_effect=fake_send
+        ):
+            with override_settings(
+                META_API_KEY='k', META_ASR_HINTS_ENABLED=False
+            ):
+                transcribe_audio(wav_bytes(), company)
+        payload = self._payload(calls[0][1])
+        self.assertNotIn('keywords', payload)
+        self.assertNotIn('languageBias', payload)
+
+    def test_no_company_sends_neither(self):
+        calls, fake_send = self._send([ok_response()])
+        with patch(
+            'tracking.ai.transcribe._send', side_effect=fake_send
+        ):
+            with override_settings(META_API_KEY='k'):
+                transcribe_audio(wav_bytes())
+        payload = self._payload(calls[0][1])
+        self.assertNotIn('keywords', payload)
+        self.assertNotIn('languageBias', payload)
+
+    def test_key_and_keywords_never_in_response_or_log(self):
+        company = self._company(
+            'Hints Secret Co', importer_name='Secret Imp', bl='SECRET001'
+        )
+        _, fake_send = self._send([(400, b'bad'), (400, b'bad')])
+        with override_settings(META_API_KEY='sentinel-key-xyz'):
+            with patch(
+                'tracking.ai.transcribe._send', side_effect=fake_send
+            ):
+                with self.assertLogs(
+                    'tracking.ai.transcribe', level='WARNING'
+                ) as logs:
+                    with self.assertRaises(TranscriptionError):
+                        transcribe_audio(wav_bytes(), company)
+        output = '\n'.join(logs.output)
+        self.assertNotIn('sentinel-key-xyz', output)
+        self.assertNotIn('Secret Imp', output)
+        self.assertNotIn('SECRET001', output)
+
+
 @override_settings(MEDIA_ROOT=VOICE_MEDIA_ROOT)
 class TranscribeEndpointTests(TestCase):
     def setUp(self):
@@ -298,12 +489,31 @@ class TranscribeEndpointTests(TestCase):
                 '/agent/assistant/transcribe/',
                 {
                     'audio': self._upload(
-                        b'RIFF' + b'x' * (2 * 1024 * 1024 + 1)
+                        b'RIFF' + b'x' * (4 * 1024 * 1024 + 1)
                     )
                 },
             )
         self.assertEqual(response.status_code, 400)
         transcribe.assert_not_called()
+
+    def test_accepts_three_mb_file(self):
+        company = AgentCompany.objects.create(name='Voice 3MB Co')
+        self.client.force_login(self._agent(company, 'voice-3mb'))
+        wav = wav_bytes(seconds=62)
+        self.assertLess(len(wav), 4 * 1024 * 1024)
+        self.assertGreater(len(wav), 2 * 1024 * 1024)
+        with patch(
+            'tracking.agent_views.transcribe_audio', return_value='hi'
+        ) as transcribe:
+            response = self.client.post(
+                '/agent/assistant/transcribe/',
+                {'audio': self._upload(wav)},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.content), {'text': 'hi'}
+        )
+        transcribe.assert_called_once_with(wav, company)
 
     def test_rejects_missing_field(self):
         company = AgentCompany.objects.create(name='Voice Empty Co')
@@ -329,7 +539,7 @@ class TranscribeEndpointTests(TestCase):
         self.assertEqual(
             json.loads(response.content), {'text': 'duty paid'}
         )
-        transcribe.assert_called_once_with(wav)
+        transcribe.assert_called_once_with(wav, company)
         self.assertEqual(Document.objects.count(), 0)
         self.assertEqual(os.listdir(VOICE_MEDIA_ROOT), [])
 
@@ -381,13 +591,19 @@ class TranscribeEndpointTests(TestCase):
         self.client.force_login(self._agent(company, 'voice-page'))
         response = self.client.get('/agent/shipments/')
         self.assertContains(response, 'assistant-mic')
+        self.assertContains(response, 'type="button"')
         self.assertContains(response, 'Record voice message')
+        self.assertContains(response, 'MediaRecorder')
+        self.assertContains(response, 'assistant-heard')
         self.assertContains(response, 'assistant-voice-status')
+        self.assertContains(response, 'aria-live="polite"')
         self.assertContains(
             response,
             'Voice is transcribed by an AI model. '
-            'Check the text before sending.',
+            'Check what it heard before you confirm.',
         )
+        self.assertNotContains(response, 'ScriptProcessorNode')
+        self.assertNotContains(response, 'assistant-voice-cancel')
 
 
 class TranscribeCheckTests(TestCase):

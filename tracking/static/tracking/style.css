@@ -404,6 +404,49 @@ button {
   margin-top: 1rem;
 }
 
+#assistant-mic.mic-live {
+  background: var(--red);
+  color: #fff;
+}
+
+#assistant-mic:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.assistant-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.assistant-row #assistant-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.assistant-row #assistant-send,
+.assistant-row #assistant-mic {
+  width: auto;
+  margin-top: 0;
+  flex: none;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .assistant-row {
+    flex-wrap: wrap;
+  }
+  .assistant-row #assistant-input {
+    flex: 1 1 100%;
+  }
+  .assistant-row #assistant-send,
+  .assistant-row #assistant-mic {
+    flex: 1;
+  }
+}
+
 .dialog {
   margin-top: 1.5rem;
   border-top: 1px solid var(--line);
