@@ -24,6 +24,7 @@ from .ai.assistant_tools import (
 )
 from .ai.client import MissingAPIKeyError
 from .ai.extract_bl import ExtractionError
+from . import shipment_stages
 from .models import (
     AgentCompany,
     AuditLog,
@@ -32,6 +33,7 @@ from .models import (
     ProposedAction,
     Shipment,
     StaffMember,
+    Stage,
     StageEvent,
 )
 from io import StringIO
@@ -89,17 +91,21 @@ class AssistantEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
         self.assertTrue(payload['ok'])
-        self.assertEqual(len(payload['recorded']), 1)
-        self.assertEqual(payload['refused'], [])
-        self.assertTrue(
-            StageEvent.objects.filter(
-                container__number='CSQU3054383',
-                stage__key='arrived_at_port',
-                occurred_at__isnull=False,
-            ).exists()
+        self.assertEqual(
+            payload['recorded'],
+            ['Recorded Arrived at port for 2 containers.'],
         )
+        self.assertEqual(payload['refused'], [])
+        events = StageEvent.objects.filter(
+            stage__key='arrived_at_port', occurred_at__isnull=False
+        )
+        self.assertEqual(events.count(), 2)
+        times = {event.occurred_at for event in events}
+        self.assertEqual(len(times), 1)
         log = AuditLog.objects.get(action='stage_completed')
         self.assertEqual(log.source, 'assistant')
+        self.assertIsNone(log.container)
+        self.assertIn('2 containers', log.new_value)
         proposal.refresh_from_db()
         self.assertEqual(proposal.status, 'confirmed')
 
@@ -629,12 +635,15 @@ class AssistantLoopTests(TestCase):
         ):
             result = run_assistant(user, 'arrived for LOOPBL001', [])
         self.assertEqual(result['type'], 'proposal')
-        self.assertEqual(len(result['summary']), 1)
-        self.assertIn('CSQU3054383', result['summary'][0])
+        self.assertEqual(
+            result['summary'],
+            ['Mark Arrived at port done for LOOPBL001 (all 2 containers).'],
+        )
         proposal = ProposedAction.objects.get(pk=result['id'])
         self.assertEqual(proposal.status, 'pending')
         self.assertEqual(proposal.company, company)
         self.assertEqual(proposal.user, user)
+        self.assertTrue(proposal.actions[0]['whole_shipment'])
         self.assertEqual(StageEvent.objects.count(), 0)
 
     def test_two_tool_calls_get_two_results(self):
@@ -646,18 +655,18 @@ class AssistantLoopTests(TestCase):
                 _model_response(
                     [
                         _tool_call(
-                            'c1', 'propose_stage_done',
+                            'c1', 'propose_add_optional_stage',
                             {
                                 'shipment_id': shipment.pk,
-                                'stage_key': 'arrived_at_port',
+                                'stage_key': 'customs_examination',
                                 'container_numbers': ['CSQU3054383'],
                             },
                         ),
                         _tool_call(
-                            'c2', 'propose_stage_done',
+                            'c2', 'propose_add_optional_stage',
                             {
                                 'shipment_id': shipment.pk,
-                                'stage_key': 'arrived_at_port',
+                                'stage_key': 'customs_examination',
                                 'container_numbers': ['DEMO4416733'],
                             },
                         ),
@@ -669,9 +678,11 @@ class AssistantLoopTests(TestCase):
         with patch(
             'tracking.ai.assistant.get_client', return_value=client
         ):
-            result = run_assistant(user, 'both arrived', [])
+            result = run_assistant(user, 'select customs for both', [])
         self.assertEqual(result['type'], 'proposal')
         self.assertEqual(len(result['summary']), 2)
+        self.assertIn('CSQU3054383', result['summary'][0])
+        self.assertIn('DEMO4416733', result['summary'][1])
 
     def test_round_limit_stops_looping_model(self):
         company = AgentCompany.objects.create(name='Loop Limit Co')
@@ -756,3 +767,217 @@ class AssistantLoopTests(TestCase):
         self.assertNotIn(
             'sentinel-key-xyz', '\n'.join(logs.output)
         )
+
+    def test_whole_shipment_duty_proposal_and_confirm(self):
+        company = AgentCompany.objects.create(name='Whole Co')
+        user = _agent(company, 'whole-user')
+        shipment, _, _ = _shipment(company, bl='DEMOBL002')
+        for key in ('arrived_at_port', 'manifest_available',
+                    'paar_assessed'):
+            self.assertIsNone(
+                shipment_stages.complete_shipment_stage(
+                    shipment, Stage.objects.get(key=key), user, 'manual'
+                )
+            )
+        client = _fake_client(
+            [
+                _model_response(
+                    [
+                        _tool_call(
+                            'c1', 'propose_stage_done',
+                            {
+                                'shipment_id': shipment.pk,
+                                'stage_key': 'duty_paid',
+                                'container_numbers': ['CSQU3054383'],
+                            },
+                        )
+                    ]
+                ),
+                _model_response(content='Proposing duty paid.'),
+            ]
+        )
+        self.client.force_login(user)
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            response = self.client.post(
+                '/agent/assistant/',
+                data=json.dumps({'text': 'duty paid for DEMOBL002'}),
+                content_type='application/json',
+            )
+        payload = json.loads(response.content)
+        self.assertEqual(payload['type'], 'proposal')
+        self.assertEqual(
+            payload['summary'],
+            ['Mark Duty paid done for DEMOBL002 (all 2 containers).'],
+        )
+        proposal = ProposedAction.objects.get(pk=payload['id'])
+        self.assertEqual(len(proposal.actions), 1)
+        self.assertTrue(proposal.actions[0]['whole_shipment'])
+        response = self.client.post(
+            '/agent/assistant/confirm/',
+            data=json.dumps({'proposal_id': proposal.pk}),
+            content_type='application/json',
+        )
+        payload = json.loads(response.content)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(
+            payload['recorded'], ['Recorded Duty paid for 2 containers.']
+        )
+        events = StageEvent.objects.filter(
+            stage__key='duty_paid', occurred_at__isnull=False
+        )
+        self.assertEqual(events.count(), 2)
+        self.assertEqual(len({event.occurred_at for event in events}), 1)
+
+    def test_three_ordered_steps_confirmed(self):
+        company = AgentCompany.objects.create(name='Three Step Co')
+        user = _agent(company, 'three-user')
+        shipment, _, _ = _shipment(company, bl='THREEBL001')
+        calls = [
+            _tool_call(
+                'c%d' % number, 'propose_stage_done',
+                {'shipment_id': shipment.pk, 'stage_key': key},
+            )
+            for number, key in enumerate(
+                ['arrived_at_port', 'manifest_available', 'paar_assessed']
+            )
+        ]
+        client = _fake_client(
+            [_model_response(calls),
+             _model_response(content='Proposing three steps.')]
+        )
+        self.client.force_login(user)
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            response = self.client.post(
+                '/agent/assistant/',
+                data=json.dumps({'text': 'arrived, manifest and paar'}),
+                content_type='application/json',
+            )
+        payload = json.loads(response.content)
+        self.assertEqual(payload['type'], 'proposal')
+        self.assertEqual(
+            [line.split(' done for ')[0] for line in payload['summary']],
+            ['Mark Arrived at port', 'Mark Manifest available',
+             'Mark PAAR assessed'],
+        )
+        proposal = ProposedAction.objects.get(pk=payload['id'])
+        self.assertEqual(
+            [item['stage_key'] for item in proposal.actions],
+            ['arrived_at_port', 'manifest_available', 'paar_assessed'],
+        )
+        response = self.client.post(
+            '/agent/assistant/confirm/',
+            data=json.dumps({'proposal_id': proposal.pk}),
+            content_type='application/json',
+        )
+        payload = json.loads(response.content)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(len(payload['recorded']), 3)
+        self.assertEqual(payload['refused'], [])
+        self.assertEqual(
+            StageEvent.objects.filter(
+                occurred_at__isnull=False
+            ).count(),
+            6,
+        )
+
+    def test_confirm_refuses_item_with_failed_dependency(self):
+        company = AgentCompany.objects.create(name='Dep Fail Co')
+        user = _agent(company, 'dep-user')
+        shipment, _, _ = _shipment(company, bl='DEPBL001')
+        for key in ('arrived_at_port', 'manifest_available',
+                    'paar_assessed'):
+            shipment_stages.complete_shipment_stage(
+                shipment, Stage.objects.get(key=key), user, 'manual'
+            )
+        proposal = ProposedAction.objects.create(
+            company=company,
+            user=user,
+            summary='Duty and gate out.',
+            actions=[
+                {
+                    'kind': 'stage_done',
+                    'shipment_id': shipment.pk,
+                    'stage_key': 'duty_paid',
+                    'container_number': None,
+                    'whole_shipment': True,
+                },
+                {
+                    'kind': 'stage_done',
+                    'shipment_id': shipment.pk,
+                    'stage_key': 'gate_out',
+                    'container_number': 'CSQU3054383',
+                },
+                {
+                    'kind': 'stage_done',
+                    'shipment_id': shipment.pk,
+                    'stage_key': 'gate_out',
+                    'container_number': 'DEMO4416733',
+                },
+            ],
+            transcript='Agent: duty and gate out',
+        )
+        self.client.force_login(user)
+        response = self.client.post(
+            '/agent/assistant/confirm/',
+            data=json.dumps({'proposal_id': proposal.pk}),
+            content_type='application/json',
+        )
+        payload = json.loads(response.content)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(
+            payload['recorded'], ['Recorded Duty paid for 2 containers.']
+        )
+        self.assertEqual(len(payload['refused']), 2)
+        self.assertIn('not recorded yet', payload['refused'][0])
+        self.assertIn('CSQU3054383', payload['refused'][0])
+        self.assertFalse(
+            StageEvent.objects.filter(stage__key='gate_out').exists()
+        )
+
+    def test_blocked_step_dropped_and_dry_run_clean(self):
+        from .ai.assistant_tools import propose_stage_done
+        from .models import AuditLog
+
+        company = AgentCompany.objects.create(name='Drop Co')
+        user = _agent(company, 'drop-user')
+        shipment, _, _ = _shipment(company, bl='DROPBL001')
+        pending = []
+        first = propose_stage_done(
+            company, shipment.pk, 'arrived_at_port',
+            pending=pending, user=user,
+        )
+        second = propose_stage_done(
+            company, shipment.pk, 'gate_out', pending=pending, user=user
+        )
+        self.assertEqual(len(first['items']), 1)
+        self.assertEqual(second['items'], [])
+        self.assertFalse(second['results'][0]['ok'])
+        self.assertIn(
+            'not recorded yet', second['results'][0]['problem']
+        )
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(StageEvent.objects.count(), 0)
+        self.assertEqual(AuditLog.objects.count(), 0)
+
+    def test_get_shipment_returns_scopes(self):
+        from .ai.assistant_tools import get_shipment
+
+        company = AgentCompany.objects.create(name='Scope Co')
+        _agent(company, 'scope-user')
+        shipment, _, _ = _shipment(company, bl='SCOPEBL001')
+        result = get_shipment(company, shipment.pk)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['scopes']['duty_paid'], 'shipment')
+        self.assertEqual(
+            result['scopes']['arrived_at_port'], 'shipment'
+        )
+        self.assertEqual(result['scopes']['gate_out'], 'container')
+
+    def test_system_instruction_shipment_steps(self):
+        self.assertIn('never ask which containers', SYSTEM_INSTRUCTION)
+        self.assertIn('propose them in order', SYSTEM_INSTRUCTION)
+        self.assertIn('missing earlier steps', SYSTEM_INSTRUCTION)

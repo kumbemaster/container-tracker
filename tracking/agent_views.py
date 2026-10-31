@@ -11,17 +11,18 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import Case, Count, F, Max, When
 from django.forms.utils import ErrorDict
-from django.http import FileResponse, JsonResponse
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from . import access as access_helpers
+from . import shipment_stages
 from . import stage_rules
 from . import timeline as timeline_helpers
 from .ai.assistant import HISTORY_LIMIT, run_assistant
-from .ai.assistant_tools import OPTIONAL_STAGE_KEYS
+from .ai import assistant_tools
 from .ai.extract_bl import extract_shipment
 from .forms import ShipmentForm, normalise_number
 from .models import (
@@ -376,46 +377,18 @@ def _log(
     )
 
 
-def _record_stage_done(
-    user,
-    shipment,
-    container,
-    stage,
-    when,
-    note,
-    source=AuditLog.Source.MANUAL,
-):
-    """Record a stage completion at the current server time.
-
-    Used by the Done button and by confirmed assistant proposals alike.
-    """
-    with transaction.atomic():
-        event, created = StageEvent.objects.get_or_create(
-            container=container,
-            stage=stage,
-            defaults={'occurred_at': when, 'note': note},
-        )
-        old_value = '' if created else str(event.occurred_at)
-        event.occurred_at = when
-        event.skipped = False
-        event.note = note
-        event.save()
-        AuditLog.objects.create(
-            shipment=shipment,
-            container=container,
-            user=user,
-            action='stage_completed',
-            old_value=old_value,
-            new_value=str(when),
-            source=source,
-        )
-
-
 @agent_required
 @require_POST
 def stage_update(request, pk):
     shipment = _scoped_shipment(request, pk)
     stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    if stage.scope == Stage.Scope.SHIPMENT:
+        messages.error(
+            request,
+            '%s is a shipment step. Record it for the whole shipment.'
+            % stage.label,
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
     when = timezone.now()
     note = request.POST.get('note', '').strip()
     container_ids = request.POST.getlist('containers')
@@ -432,8 +405,9 @@ def stage_update(request, pk):
                 % (stage.label, container.number, ' '.join(problems)),
             )
             continue
-        _record_stage_done(
-            request.user, shipment, container, stage, when, note
+        shipment_stages.record_container_stage(
+            request.user, shipment, container, stage, when, note,
+            AuditLog.Source.MANUAL,
         )
         messages.success(
             request, 'Recorded %s for %s.' % (stage.label, container.number)
@@ -445,9 +419,16 @@ def stage_update(request, pk):
 @require_POST
 def stage_select(request, pk):
     shipment = _scoped_shipment(request, pk)
-    stage = get_object_or_404(
-        Stage, key=request.POST.get('stage_key'), is_optional=True
-    )
+    stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    if stage.scope == Stage.Scope.SHIPMENT:
+        messages.error(
+            request,
+            '%s is a shipment step. Record it for the whole shipment.'
+            % stage.label,
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    if not stage.is_optional:
+        raise Http404('No Stage matches the given query.')
     container_ids = request.POST.getlist('containers')
     if not container_ids:
         messages.error(request, 'Choose at least one container.')
@@ -519,6 +500,13 @@ def stage_undo(request, pk):
     shipment = _scoped_shipment(request, pk)
     container = _scoped_container(shipment, request.POST.get('container'))
     stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    if stage.scope == Stage.Scope.SHIPMENT:
+        messages.error(
+            request,
+            '%s is a shipment step. Undo it for the whole shipment.'
+            % stage.label,
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
     problems = stage_rules.check_can_undo(container, stage)
     if problems:
         dependents = stage_rules._completed_dependents(container, stage)
@@ -548,6 +536,62 @@ def stage_undo(request, pk):
     messages.success(
         request, 'Undid %s for %s.' % (stage.label, container.number)
     )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def stage_shipment_done(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    if stage.scope != Stage.Scope.SHIPMENT:
+        messages.error(
+            request,
+            '%s is recorded per container.' % stage.label,
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    problem = shipment_stages.complete_shipment_stage(
+        shipment, stage, request.user, AuditLog.Source.MANUAL
+    )
+    if problem is None:
+        messages.success(
+            request,
+            'Recorded %s for %d containers.'
+            % (stage.label, shipment.containers.count()),
+        )
+    elif problem == shipment_stages.ALREADY_RECORDED:
+        messages.error(request, problem)
+    else:
+        messages.error(
+            request, 'Refused %s: %s' % (stage.label, problem)
+        )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
+@require_POST
+def stage_shipment_undo(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    stage = get_object_or_404(Stage, key=request.POST.get('stage_key'))
+    if stage.scope != Stage.Scope.SHIPMENT:
+        messages.error(
+            request,
+            '%s is undone per container.' % stage.label,
+        )
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    problem = shipment_stages.undo_shipment_stage(
+        shipment, stage, request.user, AuditLog.Source.MANUAL
+    )
+    if problem is None:
+        messages.success(
+            request,
+            'Undid %s for %d containers.'
+            % (stage.label, shipment.containers.count()),
+        )
+    else:
+        messages.error(
+            request, 'Cannot undo %s. %s' % (stage.label, problem)
+        )
     return redirect('agent_shipment_detail', pk=shipment.pk)
 
 
@@ -599,7 +643,11 @@ def shipment_detail(request, pk):
     entries = []
     optional_keys = [stage.key for stage in optional_stages]
     for container in containers:
-        steps = timeline_helpers.build_timeline(container, now=now)
+        steps = [
+            step
+            for step in timeline_helpers.build_timeline(container, now=now)
+            if stages_by_key[step['key']].scope == Stage.Scope.CONTAINER
+        ]
         event_keys = set(
             StageEvent.objects.filter(container=container).values_list(
                 'stage__key', flat=True
@@ -637,6 +685,52 @@ def shipment_detail(request, pk):
                 ],
             }
         )
+    shipment_steps = []
+    for stage in Stage.objects.filter(
+        scope=Stage.Scope.SHIPMENT
+    ).order_by('order'):
+        done_ids = set(
+            StageEvent.objects.filter(
+                container__shipment=shipment,
+                stage=stage,
+                occurred_at__isnull=False,
+                skipped=False,
+            ).values_list('container_id', flat=True)
+        )
+        if containers and all(
+            container.pk in done_ids for container in containers
+        ):
+            latest = (
+                StageEvent.objects.filter(
+                    container__shipment=shipment,
+                    stage=stage,
+                    occurred_at__isnull=False,
+                    skipped=False,
+                )
+                .order_by('-occurred_at')
+                .values_list('occurred_at', flat=True)
+                .first()
+            )
+            shipment_steps.append(
+                {'stage': stage, 'state': 'completed',
+                 'occurred_at': latest}
+            )
+            continue
+        lacking = [
+            container
+            for container in containers
+            if container.pk not in done_ids
+        ]
+        if lacking and not any(
+            stage_rules.check_can_complete(container, stage, now)
+            for container in lacking
+        ):
+            state = 'actionable'
+        else:
+            state = 'upcoming'
+        shipment_steps.append(
+            {'stage': stage, 'state': state, 'occurred_at': None}
+        )
     message = 'Track your shipment %s at %s with this code: %s' % (
         shipment.bl_number,
         request.build_absolute_uri('/'),
@@ -653,6 +747,7 @@ def shipment_detail(request, pk):
         {
             'shipment': shipment,
             'entries': entries,
+            'shipment_steps': shipment_steps,
             'message': message,
             'stages': Stage.objects.order_by('order'),
             'optional_stages': optional_stages,
@@ -877,111 +972,17 @@ def _scoped_proposal(request, proposal_id):
 
 
 def _apply_assistant_item(request, company, item, now, recorded, refused):
-    kind = item.get('kind')
-    shipment = Shipment.objects.filter(
-        pk=item.get('shipment_id'), importer__agent_company=company
-    ).first()
-    if shipment is None:
-        refused.append('Shipment not found for one item.')
-        return
-    container = shipment.containers.filter(
-        number__iexact=(item.get('container_number') or '').strip()
-    ).first()
-    if container is None:
-        refused.append(
-            'No container %s on %s.'
-            % (item.get('container_number'), shipment.bl_number)
-        )
-        return
-    if kind == 'stage_done':
-        stage = Stage.objects.filter(key=item.get('stage_key')).first()
-        if stage is None:
-            refused.append(
-                'Unknown stage for %s.' % container.number
-            )
-            return
-        problems = stage_rules.check_can_complete(container, stage, now)
-        if problems:
-            refused.append(
-                'Refused %s for %s: %s'
-                % (stage.label, container.number, '; '.join(problems))
-            )
-            return
-        _record_stage_done(
-            request.user,
-            shipment,
-            container,
-            stage,
-            now,
-            '',
-            source=AuditLog.Source.ASSISTANT,
-        )
-        recorded.append(
-            'Recorded %s for %s.' % (stage.label, container.number)
-        )
-    elif kind == 'select_optional':
-        stage = Stage.objects.filter(
-            key=item.get('stage_key'), is_optional=True
-        ).first()
-        if stage is None or stage.key not in OPTIONAL_STAGE_KEYS:
-            refused.append(
-                'Unknown optional stage for %s.' % container.number
-            )
-            return
-        if StageEvent.objects.filter(
-            container=container, stage=stage
-        ).exists():
-            refused.append(
-                '%s is already recorded or selected for %s.'
-                % (stage.label, container.number)
-            )
-            return
-        StageEvent.objects.create(container=container, stage=stage)
-        _log(
-            request,
-            shipment,
-            container,
-            'stage_selected',
-            new_value=stage.label,
-            source=AuditLog.Source.ASSISTANT,
-        )
-        recorded.append(
-            'Selected %s for %s.' % (stage.label, container.number)
-        )
-    elif kind == 'waiting_on':
-        waiting_on = item.get('waiting_on', '')
-        note = (item.get('note') or '').strip()
-        valid = [choice[0] for choice in Container.WaitingOn.choices]
-        if waiting_on not in valid:
-            refused.append(
-                'Unknown waiting status for %s.' % container.number
-            )
-            return
-        old_value = container.waiting_on
-        container.waiting_on = waiting_on
-        if waiting_on == Container.WaitingOn.NOBODY:
-            container.waiting_on_since = None
-            container.waiting_on_note = ''
-        else:
-            container.waiting_on_since = now
-            container.waiting_on_note = note
-        container.save()
-        _log(
-            request,
-            shipment,
-            container,
-            'waiting_changed',
-            old_value=old_value,
-            new_value=('%s — %s' % (waiting_on, note))
-            if note
-            else waiting_on,
-            source=AuditLog.Source.ASSISTANT,
-        )
-        recorded.append(
-            'Updated waiting status for %s.' % container.number
-        )
+    ok, message = assistant_tools.apply_proposal_item(
+        company,
+        request.user,
+        item,
+        now,
+        AuditLog.Source.ASSISTANT,
+    )
+    if ok:
+        recorded.append(message)
     else:
-        refused.append('Unknown change for %s.' % container.number)
+        refused.append(message)
 
 
 @agent_required

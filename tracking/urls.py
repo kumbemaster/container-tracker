@@ -59,6 +59,16 @@ urlpatterns = [
         name='agent_stage_undo',
     ),
     path(
+        'agent/shipments/<int:pk>/shipment-stages/done/',
+        agent_views.stage_shipment_done,
+        name='agent_shipment_stage_done',
+    ),
+    path(
+        'agent/shipments/<int:pk>/shipment-stages/undo/',
+        agent_views.stage_shipment_undo,
+        name='agent_shipment_stage_undo',
+    ),
+    path(
         'agent/shipments/<int:pk>/waiting/',
         agent_views.waiting_update,
         name='agent_waiting_update',

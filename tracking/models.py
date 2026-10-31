@@ -80,6 +80,10 @@ class Stage(models.Model):
         DELIVERY = 'delivery', 'Delivery'
         RETURN = 'return', 'Return'
 
+    class Scope(models.TextChoices):
+        SHIPMENT = 'shipment', 'Shipment'
+        CONTAINER = 'container', 'Container'
+
     order = models.PositiveIntegerField(unique=True)
     key = models.SlugField(max_length=100, unique=True)
     label = models.CharField(max_length=200)
@@ -88,6 +92,9 @@ class Stage(models.Model):
     is_processing_track = models.BooleanField(default=False)
     phase = models.CharField(
         max_length=20, choices=Phase.choices, default=Phase.ARRIVAL
+    )
+    scope = models.CharField(
+        max_length=20, choices=Scope.choices, default=Scope.CONTAINER
     )
 
     class Meta:

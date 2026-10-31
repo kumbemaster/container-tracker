@@ -74,6 +74,7 @@ def rendered_forms(response, action):
     return parser.forms
 
 from . import access as access_helpers
+from . import shipment_stages
 from .models import (
     AgentCompany,
     Container,
@@ -666,7 +667,7 @@ class RenderedFormTests(TestCase):
         self.assertEqual(response.status_code, 200)
         undo_forms = [
             form
-            for form in rendered_forms(response, '/stages/undo/')
+            for form in rendered_forms(response, '/shipment-stages/undo/')
             if form['data'].get('stage_key') == 'manifest_available'
         ]
         self.assertEqual(len(undo_forms), 1)
@@ -674,6 +675,9 @@ class RenderedFormTests(TestCase):
             undo_forms[0]['action'], undo_forms[0]['data'], follow=True
         )
         self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Undid Manifest available for 1 containers.'
+        )
         self.assertFalse(
             StageEvent.objects.filter(
                 container=self.container, stage__key='manifest_available'
@@ -681,7 +685,7 @@ class RenderedFormTests(TestCase):
         )
         self.assertTrue(
             AuditLog.objects.filter(
-                container=self.container, action='stage_undone'
+                container__isnull=True, action='stage_undone'
             ).exists()
         )
 
@@ -689,20 +693,19 @@ class RenderedFormTests(TestCase):
         from .models import AuditLog, StageEvent
 
         response = self._detail()
-        update_forms = [
+        done_forms = [
             form
-            for form in rendered_forms(response, '/stages/update/')
-            if 'note' in form['data']
+            for form in rendered_forms(response, '/shipment-stages/done/')
+            if form['data'].get('stage_key') == 'paar_assessed'
         ]
-        self.assertEqual(len(update_forms), 1)
-        data = dict(update_forms[0]['data'])
-        self.assertIn('value="paar_assessed"', response.content.decode())
-        data['stage_key'] = 'paar_assessed'
+        self.assertEqual(len(done_forms), 1)
         response = self.client.post(
-            update_forms[0]['action'], data, follow=True
+            done_forms[0]['action'], done_forms[0]['data'], follow=True
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Recorded PAAR assessed')
+        self.assertContains(
+            response, 'Recorded PAAR assessed for 1 containers.'
+        )
         self.assertTrue(
             StageEvent.objects.filter(
                 container=self.container, stage__key='paar_assessed'
@@ -710,9 +713,47 @@ class RenderedFormTests(TestCase):
         )
         self.assertTrue(
             AuditLog.objects.filter(
-                container=self.container, action='stage_completed'
+                container__isnull=True, action='stage_completed'
             ).exists()
         )
+        update_forms = [
+            form
+            for form in rendered_forms(response, '/stages/update/')
+            if 'note' in form['data']
+        ]
+        self.assertEqual(len(update_forms), 1)
+        data = dict(update_forms[0]['data'])
+        data['stage_key'] = 'duty_paid'
+        response = self.client.post(
+            update_forms[0]['action'], data, follow=True
+        )
+        self.assertContains(
+            response,
+            'Duty paid is a shipment step. '
+            'Record it for the whole shipment.',
+        )
+        duty_forms = [
+            form
+            for form in rendered_forms(
+                self._detail(), '/shipment-stages/done/'
+            )
+            if form['data'].get('stage_key') == 'duty_paid'
+        ]
+        self.assertEqual(len(duty_forms), 1)
+        self.client.post(
+            duty_forms[0]['action'], duty_forms[0]['data'], follow=True
+        )
+        update_forms = [
+            form
+            for form in rendered_forms(self._detail(), '/stages/update/')
+            if 'note' in form['data']
+        ]
+        data = dict(update_forms[0]['data'])
+        data['stage_key'] = 'shipping_line_processed'
+        response = self.client.post(
+            update_forms[0]['action'], data, follow=True
+        )
+        self.assertContains(response, 'Recorded Shipping line processed')
 
     def test_select_and_unselect_as_rendered(self):
         from .models import AuditLog, StageEvent
@@ -1042,14 +1083,16 @@ class StageUpdateTests(TestCase):
             stage=self.Stage.objects.get(key='shipping_line_processed'),
             occurred_at=self.now,
         )
-        undo_url = '/agent/shipments/%d/stages/undo/' % self.shipment.pk
+        undo_url = (
+            '/agent/shipments/%d/shipment-stages/undo/' % self.shipment.pk
+        )
         response = self.client.post(
-            undo_url,
-            {'container': str(self.container1.pk), 'stage_key': 'duty_paid'},
-            follow=True,
+            undo_url, {'stage_key': 'duty_paid'}, follow=True
         )
         self.assertContains(
-            response, 'Undo Shipping line processed first.'
+            response,
+            'Cannot undo Duty paid. '
+            'Shipping line processed depends on Duty paid.',
         )
         self.assertTrue(
             self.StageEvent.objects.filter(
@@ -1057,7 +1100,7 @@ class StageUpdateTests(TestCase):
             ).exists()
         )
         response = self.client.post(
-            undo_url,
+            '/agent/shipments/%d/stages/undo/' % self.shipment.pk,
             {
                 'container': str(self.container1.pk),
                 'stage_key': 'shipping_line_processed',
@@ -1074,6 +1117,18 @@ class StageUpdateTests(TestCase):
         self.assertTrue(
             AuditLog.objects.filter(
                 container=self.container1, action='stage_undone'
+            ).exists()
+        )
+        response = self.client.post(
+            undo_url, {'stage_key': 'duty_paid'}, follow=True
+        )
+        self.assertContains(
+            response,
+            'Cannot undo Duty paid. Duty paid is not recorded yet.',
+        )
+        self.assertTrue(
+            self.StageEvent.objects.filter(
+                container=self.container1, stage__key='duty_paid'
             ).exists()
         )
 
@@ -1133,3 +1188,305 @@ class StageUpdateTests(TestCase):
         response = self.client.get('/s/CSQU3054383/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Terminal processed')
+
+
+class ShipmentStageTests(TestCase):
+    def setUp(self):
+        from django.utils import timezone
+
+        from .models import Stage
+
+        company = AgentCompany.objects.create(name='Ship Step Co')
+        user = User.objects.create_user(
+            username='shipper', password='secret123'
+        )
+        StaffMember.objects.create(
+            user=user, agent_company=company, role=StaffMember.Role.OWNER
+        )
+        importer = Importer.objects.create(
+            agent_company=company, name='Ship Importer',
+            access_code='333333',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='SHIPBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        self.user = user
+        self.shipment = shipment
+        self.container1 = Container.objects.create(
+            shipment=shipment, number='SHPA1000001', size='40ft'
+        )
+        self.container2 = Container.objects.create(
+            shipment=shipment, number='SHPA1000002', size='20ft'
+        )
+        self.Stage = Stage
+        self.now = timezone.now()
+        self.client.force_login(user)
+
+    def _stage(self, key):
+        return self.Stage.objects.get(key=key)
+
+    def _prereqs(self, *keys):
+        from .models import StageEvent
+
+        for container in (self.container1, self.container2):
+            for key in keys:
+                StageEvent.objects.create(
+                    container=container,
+                    stage=self._stage(key),
+                    occurred_at=self.now,
+                )
+
+    def test_complete_records_all_with_same_time_and_one_log(self):
+        from .models import AuditLog, StageEvent
+
+        self._prereqs('arrived_at_port', 'manifest_available',
+                      'paar_assessed')
+        problem = shipment_stages.complete_shipment_stage(
+            self.shipment, self._stage('duty_paid'), self.user, 'manual'
+        )
+        self.assertIsNone(problem)
+        events = StageEvent.objects.filter(
+            stage__key='duty_paid', occurred_at__isnull=False
+        )
+        self.assertEqual(events.count(), 2)
+        times = {event.occurred_at for event in events}
+        self.assertEqual(len(times), 1)
+        logs = AuditLog.objects.filter(action='stage_completed')
+        self.assertEqual(logs.count(), 1)
+        log = logs.get()
+        self.assertIsNone(log.container)
+        self.assertEqual(log.source, 'manual')
+        self.assertEqual(log.new_value, 'Duty paid for 2 containers')
+
+    def test_complete_refuses_everything_if_one_fails(self):
+        from .models import AuditLog, StageEvent
+
+        self._prereqs('arrived_at_port', 'manifest_available',
+                      'paar_assessed')
+        StageEvent.objects.filter(
+            container=self.container2, stage__key='manifest_available'
+        ).delete()
+        problem = shipment_stages.complete_shipment_stage(
+            self.shipment, self._stage('duty_paid'), self.user, 'manual'
+        )
+        self.assertEqual(
+            problem, 'Manifest available is not recorded yet.'
+        )
+        self.assertFalse(
+            StageEvent.objects.filter(stage__key='duty_paid').exists()
+        )
+        self.assertFalse(
+            AuditLog.objects.filter(action='stage_completed').exists()
+        )
+
+    def test_complete_already_recorded(self):
+        from .models import AuditLog, StageEvent
+
+        self.assertIsNone(
+            shipment_stages.complete_shipment_stage(
+                self.shipment, self._stage('arrived_at_port'),
+                self.user, 'manual',
+            )
+        )
+        self.assertEqual(
+            shipment_stages.complete_shipment_stage(
+                self.shipment, self._stage('arrived_at_port'),
+                self.user, 'manual',
+            ),
+            'Already recorded.',
+        )
+        self.assertEqual(
+            StageEvent.objects.filter(
+                stage__key='arrived_at_port'
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            AuditLog.objects.filter(action='stage_completed').count(), 1
+        )
+
+    def test_undo_is_all_or_nothing(self):
+        from .models import AuditLog, StageEvent
+
+        self.assertIsNone(
+            shipment_stages.complete_shipment_stage(
+                self.shipment, self._stage('arrived_at_port'),
+                self.user, 'manual',
+            )
+        )
+        StageEvent.objects.filter(container=self.container2).delete()
+        problem = shipment_stages.undo_shipment_stage(
+            self.shipment, self._stage('arrived_at_port'),
+            self.user, 'manual',
+        )
+        self.assertEqual(problem, 'Arrived at port is not recorded yet.')
+        self.assertTrue(
+            StageEvent.objects.filter(
+                container=self.container1
+            ).exists()
+        )
+        self.assertFalse(
+            AuditLog.objects.filter(action='stage_undone').exists()
+        )
+        self.assertIsNone(
+            shipment_stages.complete_shipment_stage(
+                self.shipment, self._stage('arrived_at_port'),
+                self.user, 'manual',
+            )
+        )
+        self.assertIsNone(
+            shipment_stages.undo_shipment_stage(
+                self.shipment, self._stage('arrived_at_port'),
+                self.user, 'manual',
+            )
+        )
+        self.assertFalse(
+            StageEvent.objects.filter(
+                stage__key='arrived_at_port'
+            ).exists()
+        )
+        log = AuditLog.objects.get(action='stage_undone')
+        self.assertIsNone(log.container)
+        self.assertIn('2 containers', log.old_value)
+
+    def test_per_container_endpoints_refuse_shipment_scope(self):
+        from .models import StageEvent
+
+        url = '/agent/shipments/%d/' % self.shipment.pk
+        response = self.client.post(
+            url + 'stages/update/',
+            {
+                'stage_key': 'arrived_at_port',
+                'containers': [str(self.container1.pk)],
+                'note': '',
+            },
+            follow=True,
+        )
+        self.assertContains(
+            response,
+            'Arrived at port is a shipment step. '
+            'Record it for the whole shipment.',
+        )
+        response = self.client.post(
+            url + 'stages/undo/',
+            {
+                'container': str(self.container1.pk),
+                'stage_key': 'arrived_at_port',
+            },
+            follow=True,
+        )
+        self.assertContains(
+            response,
+            'Arrived at port is a shipment step. '
+            'Undo it for the whole shipment.',
+        )
+        response = self.client.post(
+            url + 'stages/select/',
+            {
+                'stage_key': 'arrived_at_port',
+                'containers': [str(self.container1.pk)],
+            },
+            follow=True,
+        )
+        self.assertContains(
+            response,
+            'Arrived at port is a shipment step. '
+            'Record it for the whole shipment.',
+        )
+        self.assertFalse(StageEvent.objects.exists())
+
+    def test_shipment_endpoints_reject_container_scope(self):
+        url = '/agent/shipments/%d/' % self.shipment.pk
+        response = self.client.post(
+            url + 'shipment-stages/done/',
+            {'stage_key': 'shipping_line_processed'},
+            follow=True,
+        )
+        self.assertContains(
+            response, 'Shipping line processed is recorded per container.'
+        )
+        response = self.client.post(
+            url + 'shipment-stages/undo/',
+            {'stage_key': 'shipping_line_processed'},
+            follow=True,
+        )
+        self.assertContains(
+            response, 'Shipping line processed is undone per container.'
+        )
+
+    def test_posted_time_is_ignored_on_shipment_done(self):
+        from django.utils import timezone
+
+        from .models import StageEvent
+
+        response = self.client.post(
+            '/agent/shipments/%d/shipment-stages/done/' % self.shipment.pk,
+            {'stage_key': 'arrived_at_port', 'when': '2001-01-01T00:00'},
+            follow=True,
+        )
+        self.assertContains(
+            response, 'Recorded Arrived at port for 2 containers.'
+        )
+        event = StageEvent.objects.get(
+            container=self.container1, stage__key='arrived_at_port'
+        )
+        self.assertNotEqual(event.occurred_at.year, 2001)
+        delta = abs(
+            (timezone.now() - event.occurred_at).total_seconds()
+        )
+        self.assertLess(delta, 120)
+
+    def test_top_form_has_no_time_input(self):
+        response = self.client.get(
+            '/agent/shipments/%d/' % self.shipment.pk
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'datetime-local')
+        self.assertNotContains(response, 'name="when"')
+
+    def test_shipment_steps_card_and_hidden_tiles(self):
+        response = self.client.get(
+            '/agent/shipments/%d/' % self.shipment.pk
+        )
+        html = response.content.decode()
+        self.assertContains(response, 'Shipment steps')
+        for label in (
+            'Arrived at port', 'Manifest available', 'PAAR assessed',
+            'Duty paid',
+        ):
+            self.assertContains(response, label)
+        boxes = html.split('<details class="row abox"')[1:]
+        self.assertEqual(len(boxes), 2)
+        for box in boxes:
+            for label in (
+                'Arrived at port', 'Manifest available',
+                'PAAR assessed', 'Duty paid',
+            ):
+                self.assertNotIn(label, box)
+        self.assertContains(response, 'Whole shipment (2 containers)')
+        self.assertContains(response, 'data-scope="shipment"')
+        self.assertContains(response, 'data-scope="container"')
+        self.assertContains(response, 'refreshScope')
+
+    def test_shipment_tile_menus(self):
+        url = '/agent/shipments/%d/' % self.shipment.pk
+        html = self.client.get(url).content.decode()
+        card = html.split('Shipment steps')[1].split(
+            '<details class="row abox"'
+        )[0]
+        self.assertEqual(card.count('/shipment-stages/done/'), 2)
+        self.assertNotIn('/shipment-stages/undo/', card)
+        self.assertNotIn('Gate out', card)
+        self.client.post(
+            url + 'shipment-stages/done/', {'stage_key': 'arrived_at_port'}
+        )
+        html = self.client.get(url).content.decode()
+        card = html.split('Shipment steps')[1].split(
+            '<details class="row abox"'
+        )[0]
+        self.assertEqual(card.count('/shipment-stages/undo/'), 1)
+        self.assertEqual(card.count('/shipment-stages/done/'), 1)

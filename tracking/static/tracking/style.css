@@ -1003,6 +1003,10 @@ time {
   color: var(--ok);
 }
 
+.tile-actionable .tile-icon {
+  color: var(--ok);
+}
+
 .tile-upcoming .tile-icon {
   color: var(--upcoming);
 }

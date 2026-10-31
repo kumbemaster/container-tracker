@@ -15,16 +15,17 @@
 </div>
 <div class="card">
 <h2>Update stage</h2>
-<form method="post" action="{% url 'agent_stage_update' pk=shipment.pk %}">
+<form id="update-form" method="post" action="{% url 'agent_stage_update' pk=shipment.pk %}" data-done-url="{% url 'agent_stage_update' pk=shipment.pk %}" data-shipment-done-url="{% url 'agent_shipment_stage_done' pk=shipment.pk %}">
 {% csrf_token %}
 <div class="ubar">
 <p><label for="id-stage">Stage</label>
 <select id="id-stage" name="stage_key">
 {% for stage in stages %}
-<option value="{{ stage.key }}">{{ stage.label }}</option>
+<option value="{{ stage.key }}" data-scope="{{ stage.scope }}">{{ stage.label }}</option>
 {% endfor %}
 </select></p>
-<div class="picker-wrap">
+<p id="picker-whole" hidden>Whole shipment ({{ entries|length }} containers)</p>
+<div class="picker-wrap" id="picker-wrap">
 <span class="picker-label" id="picker-label">Containers</span>
 <details class="picker" id="container-picker">
 <summary><span class="picker-summary" id="picker-summary">All containers ({{ entries|length }})</span>
@@ -48,6 +49,42 @@
 {% endfor %}
 {% endif %}
 </div>
+{% if shipment_steps %}
+<div class="card">
+<h2>Shipment steps</h2>
+<div class="tiles">
+{% for item in shipment_steps %}
+<div class="tile tile-{{ item.state }}">
+<span class="tile-icon">{% include "tracking/_stage_icon.html" with step_key=item.stage.key %}</span>
+<p class="tile-label">{{ item.stage.label }}</p>
+{% if item.state == 'completed' %}
+{% if item.occurred_at %}<p class="tile-time"><time>{{ item.occurred_at|date:"j M Y, H:i" }}</time></p>{% endif %}
+<p class="tile-check"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Completed</p>
+<details class="tile-menu">
+<summary>Actions</summary>
+<button type="button" class="small-btn" disabled>Done</button>
+<form method="post" action="{% url 'agent_shipment_stage_undo' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="stage_key" value="{{ item.stage.key }}">
+<button type="submit" class="small-btn">Undo</button>
+</form>
+</details>
+{% elif item.state == 'actionable' %}
+<details class="tile-menu">
+<summary>Actions</summary>
+<form method="post" action="{% url 'agent_shipment_stage_done' pk=shipment.pk %}">
+{% csrf_token %}
+<input type="hidden" name="stage_key" value="{{ item.stage.key }}">
+<button type="submit" class="small-btn">Done</button>
+</form>
+<button type="button" class="small-btn" disabled>Undo</button>
+</details>
+{% endif %}
+</div>
+{% endfor %}
+</div>
+</div>
+{% endif %}
 {% for entry in entries %}
 <details class="row abox"{% if entries|length == 1 %} open{% endif %}>
 <summary>
@@ -168,6 +205,22 @@ document.querySelectorAll('[id^="copy-"][id$="-btn"]').forEach(function (btn) {
     if (target) navigator.clipboard.writeText(target.textContent);
   });
 });
+(function () {
+  var stage = document.getElementById('id-stage');
+  var form = document.getElementById('update-form');
+  var wrap = document.getElementById('picker-wrap');
+  var whole = document.getElementById('picker-whole');
+  function refreshScope() {
+    if (!stage || !form) return;
+    var scope = stage.options[stage.selectedIndex].dataset.scope;
+    var isShipment = scope === 'shipment';
+    form.action = isShipment ? form.dataset.shipmentDoneUrl : form.dataset.doneUrl;
+    if (wrap) wrap.style.display = isShipment ? 'none' : '';
+    if (whole) whole.hidden = !isShipment;
+  }
+  if (stage) stage.addEventListener('change', refreshScope);
+  refreshScope();
+})();
 (function () {
   var picker = document.getElementById('container-picker');
   if (!picker) return;

@@ -49,7 +49,13 @@ goods don reach), empty_container_returned (empty returned). Reply in the \
 same language the agent last used: English unless they wrote in Pidgin. Keep \
 replies to two short sentences. When asking which shipment is meant, list at \
 most three candidates by BL number, importer name and container numbers, and \
-never mention internal ids or database numbers; the agent never knows them."""
+never mention internal ids or database numbers; the agent never knows them. \
+Arrived at port, manifest available, PAAR assessed and duty paid are \
+shipment steps covering the whole shipment: for them never ask which \
+containers, propose once for the whole shipment. When a tool reports a \
+blocking problem, tell the agent the problem in one sentence and offer to \
+propose the missing earlier steps instead of asking something else. When the \
+agent names several steps in one sentence, propose them in order."""
 
 TOOL_DEFINITIONS = [
     {
@@ -194,7 +200,7 @@ def _tool_call_dict(call):
     }
 
 
-def _run_tool(company, call):
+def _run_tool(company, user, pending, call):
     name = getattr(getattr(call, 'function', None), 'name', '')
     try:
         arguments = json.loads(
@@ -210,6 +216,10 @@ def _run_tool(company, call):
     try:
         if name == 'ask_clarification':
             return function(**arguments)
+        if name.startswith('propose_'):
+            return function(
+                company, pending=pending, user=user, **arguments
+            )
         return function(company, **arguments)
     except TypeError:
         return {'ok': False, 'error': 'Those tool arguments were not valid.'}
@@ -230,20 +240,40 @@ def _summary_lines(items):
         ).values_list('pk', 'bl_number')
     }
     lines = []
+    counts = {}
+    for item in items:
+        if item.get('whole_shipment'):
+            key = item['shipment_id']
+            if key not in counts:
+                counts[key] = Container.objects.filter(
+                    shipment_id=key
+                ).count()
     for item in items:
         bl = shipments.get(item['shipment_id'], '')
         number = item['container_number']
+        label = stages.get(
+            item.get('stage_key'), item.get('stage_key')
+        )
+        if item.get('whole_shipment'):
+            count = counts.get(item['shipment_id'], 0)
+            if item['kind'] == 'stage_done':
+                lines.append(
+                    'Mark %s done for %s (all %d containers).'
+                    % (label, bl, count)
+                )
+            elif item['kind'] == 'select_optional':
+                lines.append(
+                    'Add %s for %s (all %d containers).'
+                    % (label, bl, count)
+                )
+            continue
         if item['kind'] == 'stage_done':
             lines.append(
-                'Mark %s done for %s (%s).'
-                % (stages.get(item['stage_key'], item['stage_key']),
-                   number, bl)
+                'Mark %s done for %s (%s).' % (label, number, bl)
             )
         elif item['kind'] == 'select_optional':
             lines.append(
-                'Add %s for %s (%s).'
-                % (stages.get(item['stage_key'], item['stage_key']),
-                   number, bl)
+                'Add %s for %s (%s).' % (label, number, bl)
             )
         elif item['kind'] == 'waiting_on':
             lines.append(
@@ -284,7 +314,7 @@ def run_assistant(user, text, history):
     start = time.monotonic()
     try:
         client = get_client()
-        items = []
+        pending = []
         final_text = ''
         for _ in range(MAX_ROUNDS):
             response = client.chat.completions.create(
@@ -307,7 +337,7 @@ def run_assistant(user, text, history):
                 }
             )
             for call in calls:
-                result = _run_tool(company, call)
+                result = _run_tool(company, user, pending, call)
                 if 'question' in result:
                     logger.info(
                         'assistant status=ok duration=%.1fs',
@@ -317,7 +347,6 @@ def run_assistant(user, text, history):
                         'type': 'question',
                         'question': result['question'],
                     }
-                items.extend(result.get('items') or [])
                 messages.append(
                     {
                         'role': 'tool',
@@ -344,6 +373,7 @@ def run_assistant(user, text, history):
     logger.info(
         'assistant status=ok duration=%.1fs', time.monotonic() - start
     )
+    items = list(pending)
     if items:
         lines = _summary_lines(items)
         transcript = 'Agent: %s\nAssistant: %s' % (

@@ -5,12 +5,20 @@ the model never supplies a company or user argument, and no tool
 result ever includes an access code.
 """
 
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from .. import shipment_stages
 from .. import stage_rules
 from .. import timeline as timeline_helpers
-from ..models import Container, Shipment, Stage, StageEvent
+from ..models import (
+    AuditLog,
+    Container,
+    Shipment,
+    Stage,
+    StageEvent,
+)
 
 MAX_SHIPMENTS = 5
 OPTIONAL_STAGE_KEYS = (
@@ -166,13 +174,57 @@ def get_shipment(company, shipment_id):
         'bl_number': shipment.bl_number,
         'importer_name': shipment.importer.name,
         'containers': containers,
+        'scopes': {
+            key: scope
+            for key, scope in Stage.objects.values_list('key', 'scope')
+        },
     }
 
 
+def _whole_item(kind, shipment, stage):
+    return {
+        'kind': kind,
+        'shipment_id': shipment.pk,
+        'stage_key': stage.key,
+        'container_number': None,
+        'whole_shipment': True,
+    }
+
+
+def _check_pending(company, user, pending, candidates):
+    """Append candidates, dry run the whole list, drop failures.
+
+    Returns (results, items) for this call's candidates: results carry
+    ok or the problem sentence, items are the surviving candidates.
+    """
+    start = len(pending)
+    pending.extend(candidate for candidate, _label in candidates)
+    failures = dry_run_items(company, user, pending)
+    results, items = [], []
+    for offset, (candidate, label) in enumerate(candidates):
+        problem = failures.get(start + offset)
+        if problem is None:
+            results.append({'number': label, 'ok': True})
+            items.append(candidate)
+        else:
+            results.append(
+                {'number': label, 'ok': False, 'problem': problem}
+            )
+    return results, items
+
+
 def propose_stage_done(
-    company, shipment_id, stage_key, container_numbers=None
+    company, shipment_id, stage_key, container_numbers=None,
+    pending=None, user=None,
 ):
-    """Validate a stage completion per container; never writes anything."""
+    """Validate a stage completion; never writes anything.
+
+    A shipment-scope stage ignores container_numbers and proposes one
+    whole-shipment item. When pending and user are given (the assistant
+    loop), candidates join this request's pending list and the whole
+    list is dry run in order; otherwise candidates are validated
+    against the current database state.
+    """
     shipment = _shipment_scope(company, shipment_id)
     if shipment is None:
         return _error(
@@ -181,47 +233,120 @@ def propose_stage_done(
     stage = Stage.objects.filter(key=stage_key).first()
     if stage is None:
         return _error('Unknown stage: %s.' % (stage_key,))
+    if stage.scope == Stage.Scope.SHIPMENT:
+        candidates = [(_whole_item('stage_done', shipment, stage), None)]
+        if pending is None or user is None:
+            return _direct_whole_result(
+                company, shipment, stage, candidates
+            )
+        results, items = _check_pending(
+            company, user, pending, candidates
+        )
+        return {'ok': True, 'results': results, 'items': items}
     found, unknown = _resolve_containers(shipment, container_numbers)
-    now = timezone.now()
-    results, items = [], []
-    for raw in unknown:
-        results.append(
+    candidates = [
+        (
             {
-                'number': raw,
-                'ok': False,
-                'problem': 'No container %s on this shipment.'
-                % (raw,),
-            }
+                'kind': 'stage_done',
+                'shipment_id': shipment.pk,
+                'stage_key': stage.key,
+                'container_number': container.number,
+            },
+            container.number,
         )
-    for container in found:
-        problems = stage_rules.check_can_complete(
-            container, stage, now
-        )
-        if problems:
-            results.append(
+        for container in found
+    ]
+    results = [
+        {
+            'number': raw,
+            'ok': False,
+            'problem': 'No container %s on this shipment.' % (raw,),
+        }
+        for raw in unknown
+    ]
+    if pending is None or user is None:
+        now = timezone.now()
+        items = []
+        for candidate, label in candidates:
+            container = shipment.containers.filter(
+                number__iexact=label
+            ).first()
+            problems = stage_rules.check_can_complete(
+                container, stage, now
+            )
+            if problems:
+                results.append(
+                    {'number': label, 'ok': False,
+                     'problem': problems[0]}
+                )
+            else:
+                results.append({'number': label, 'ok': True})
+                items.append(candidate)
+        return {'ok': True, 'results': results, 'items': items}
+    checked, items = _check_pending(company, user, pending, candidates)
+    return {'ok': True, 'results': results + checked, 'items': items}
+
+
+def _direct_whole_result(
+    company, shipment, stage, candidates, needs_rules=True
+):
+    """Validate one whole-shipment candidate against current state."""
+    done = set(
+        StageEvent.objects.filter(
+            container__shipment=shipment,
+            stage=stage,
+            occurred_at__isnull=False,
+            skipped=False,
+        ).values_list('container_id', flat=True)
+    )
+    lacking = [
+        container
+        for container in shipment.containers.order_by('number')
+        if container.pk not in done
+    ]
+    if not lacking:
+        return {
+            'ok': True,
+            'results': [
                 {
-                    'number': container.number,
+                    'number': None,
                     'ok': False,
-                    'problem': problems[0],
+                    'problem': shipment_stages.ALREADY_RECORDED,
                 }
+            ],
+            'items': [],
+        }
+    if needs_rules:
+        now = timezone.now()
+        for container in lacking:
+            problems = stage_rules.check_can_complete(
+                container, stage, now
             )
-        else:
-            results.append({'number': container.number, 'ok': True})
-            items.append(
-                {
-                    'kind': 'stage_done',
-                    'shipment_id': shipment.pk,
-                    'stage_key': stage.key,
-                    'container_number': container.number,
+            if problems:
+                return {
+                    'ok': True,
+                    'results': [
+                        {'number': None, 'ok': False,
+                         'problem': problems[0]}
+                    ],
+                    'items': [],
                 }
-            )
-    return {'ok': True, 'results': results, 'items': items}
+    return {
+        'ok': True,
+        'results': [{'number': None, 'ok': True}],
+        'items': [candidate for candidate, _label in candidates],
+    }
 
 
 def propose_add_optional_stage(
-    company, shipment_id, stage_key, container_numbers=None
+    company, shipment_id, stage_key, container_numbers=None,
+    pending=None, user=None,
 ):
-    """Select an optional stage for containers; never writes anything."""
+    """Select an optional stage; never writes anything.
+
+    A shipment-scope stage ignores container_numbers and proposes one
+    whole-shipment item.
+    """
     if stage_key not in OPTIONAL_STAGE_KEYS:
         return _error(
             'Only customs_examination and '
@@ -237,45 +362,65 @@ def propose_add_optional_stage(
     ).first()
     if stage is None:
         return _error('Unknown optional stage: %s.' % (stage_key,))
-    found, unknown = _resolve_containers(shipment, container_numbers)
-    results, items = [], []
-    for raw in unknown:
-        results.append(
-            {
-                'number': raw,
-                'ok': False,
-                'problem': 'No container %s on this shipment.'
-                % (raw,),
-            }
+    if stage.scope == Stage.Scope.SHIPMENT:
+        candidates = [(_whole_item('select_optional', shipment, stage), None)]
+        if pending is None or user is None:
+            return _direct_whole_result(
+                company, shipment, stage, candidates, needs_rules=False
+            )
+        results, items = _check_pending(
+            company, user, pending, candidates
         )
-    for container in found:
-        if StageEvent.objects.filter(
-            container=container, stage=stage
-        ).exists():
-            results.append(
-                {
-                    'number': container.number,
-                    'ok': False,
-                    'problem': '%s is already recorded or selected '
-                    'for %s.' % (stage.label, container.number),
-                }
-            )
-        else:
-            results.append({'number': container.number, 'ok': True})
-            items.append(
-                {
-                    'kind': 'select_optional',
-                    'shipment_id': shipment.pk,
-                    'stage_key': stage.key,
-                    'container_number': container.number,
-                }
-            )
-    return {'ok': True, 'results': results, 'items': items}
+        return {'ok': True, 'results': results, 'items': items}
+    found, unknown = _resolve_containers(shipment, container_numbers)
+    candidates = [
+        (
+            {
+                'kind': 'select_optional',
+                'shipment_id': shipment.pk,
+                'stage_key': stage.key,
+                'container_number': container.number,
+            },
+            container.number,
+        )
+        for container in found
+    ]
+    results = [
+        {
+            'number': raw,
+            'ok': False,
+            'problem': 'No container %s on this shipment.' % (raw,),
+        }
+        for raw in unknown
+    ]
+    if pending is None or user is None:
+        items = []
+        for candidate, label in candidates:
+            container = shipment.containers.filter(
+                number__iexact=label
+            ).first()
+            if StageEvent.objects.filter(
+                container=container, stage=stage
+            ).exists():
+                results.append(
+                    {
+                        'number': label,
+                        'ok': False,
+                        'problem': '%s is already recorded or selected '
+                        'for %s.' % (stage.label, label),
+                    }
+                )
+            else:
+                results.append({'number': label, 'ok': True})
+                items.append(candidate)
+        return {'ok': True, 'results': results, 'items': items}
+    checked, items = _check_pending(company, user, pending, candidates)
+    return {'ok': True, 'results': results + checked, 'items': items}
 
 
 def propose_waiting_on(
     company, shipment_id, container_numbers=None, waiting_on='',
-    note=''
+    note='', pending=None, user=None,
 ):
     """Propose a waiting-on change; never writes anything."""
     valid = [choice[0] for choice in Container.WaitingOn.choices]
@@ -290,28 +435,193 @@ def propose_waiting_on(
             'No shipment with that id belongs to your company.'
         )
     found, unknown = _resolve_containers(shipment, container_numbers)
-    results, items = [], []
-    for raw in unknown:
-        results.append(
-            {
-                'number': raw,
-                'ok': False,
-                'problem': 'No container %s on this shipment.'
-                % (raw,),
-            }
-        )
-    for container in found:
-        results.append({'number': container.number, 'ok': True})
-        items.append(
+    candidates = [
+        (
             {
                 'kind': 'waiting_on',
                 'shipment_id': shipment.pk,
                 'container_number': container.number,
                 'waiting_on': waiting_on,
                 'note': (note or '').strip(),
-            }
+            },
+            container.number,
         )
-    return {'ok': True, 'results': results, 'items': items}
+        for container in found
+    ]
+    results = [
+        {
+            'number': raw,
+            'ok': False,
+            'problem': 'No container %s on this shipment.' % (raw,),
+        }
+        for raw in unknown
+    ]
+    if pending is None or user is None:
+        return {
+            'ok': True,
+            'results': results
+            + [{'number': label, 'ok': True} for _, label in candidates],
+            'items': [candidate for candidate, _label in candidates],
+        }
+    checked, items = _check_pending(company, user, pending, candidates)
+    return {'ok': True, 'results': results + checked, 'items': items}
+
+
+def apply_proposal_item(company, user, item, when, source):
+    """Apply one proposal item for real.
+
+    Returns (True, recorded message) or (False, problem message).
+    Used by the confirm endpoint and by the proposal dry run.
+    """
+    kind = item.get('kind')
+    shipment = Shipment.objects.filter(
+        pk=item.get('shipment_id'), importer__agent_company=company
+    ).first()
+    if shipment is None:
+        return False, 'Shipment not found for one item.'
+    if item.get('whole_shipment'):
+        return _apply_whole_item(company, user, shipment, item, source)
+    container = shipment.containers.filter(
+        number__iexact=(item.get('container_number') or '').strip()
+    ).first()
+    if container is None:
+        return False, 'No container %s on %s.' % (
+            item.get('container_number'), shipment.bl_number)
+    if kind == 'stage_done':
+        stage = Stage.objects.filter(key=item.get('stage_key')).first()
+        if stage is None:
+            return False, 'Unknown stage for %s.' % container.number
+        problems = stage_rules.check_can_complete(container, stage, when)
+        if problems:
+            return False, 'Refused %s for %s: %s' % (
+                stage.label, container.number, '; '.join(problems))
+        shipment_stages.record_container_stage(
+            user, shipment, container, stage, when, '', source
+        )
+        return True, 'Recorded %s for %s.' % (
+            stage.label, container.number)
+    if kind == 'select_optional':
+        stage = Stage.objects.filter(
+            key=item.get('stage_key'), is_optional=True
+        ).first()
+        if stage is None or stage.key not in OPTIONAL_STAGE_KEYS:
+            return False, 'Unknown optional stage for %s.' % (
+                container.number)
+        if StageEvent.objects.filter(
+            container=container, stage=stage
+        ).exists():
+            return False, '%s is already recorded or selected for %s.' % (
+                stage.label, container.number)
+        StageEvent.objects.create(container=container, stage=stage)
+        AuditLog.objects.create(
+            shipment=shipment,
+            container=container,
+            user=user,
+            action='stage_selected',
+            old_value='',
+            new_value=stage.label,
+            source=source,
+        )
+        return True, 'Selected %s for %s.' % (
+            stage.label, container.number)
+    if kind == 'waiting_on':
+        waiting_on = item.get('waiting_on', '')
+        note = (item.get('note') or '').strip()
+        valid = [choice[0] for choice in Container.WaitingOn.choices]
+        if waiting_on not in valid:
+            return False, 'Unknown waiting status for %s.' % (
+                container.number)
+        old_value = container.waiting_on
+        container.waiting_on = waiting_on
+        if waiting_on == Container.WaitingOn.NOBODY:
+            container.waiting_on_since = None
+            container.waiting_on_note = ''
+        else:
+            container.waiting_on_since = when
+            container.waiting_on_note = note
+        container.save()
+        AuditLog.objects.create(
+            shipment=shipment,
+            container=container,
+            user=user,
+            action='waiting_changed',
+            old_value=old_value,
+            new_value=('%s — %s' % (waiting_on, note))
+            if note
+            else waiting_on,
+            source=source,
+        )
+        return True, 'Updated waiting status for %s.' % container.number
+    return False, 'Unknown change for %s.' % container.number
+
+
+def _apply_whole_item(company, user, shipment, item, source):
+    kind = item.get('kind')
+    stage = Stage.objects.filter(key=item.get('stage_key')).first()
+    if stage is None or stage.scope != Stage.Scope.SHIPMENT:
+        return False, 'Unknown shipment step.'
+    count = shipment.containers.count()
+    if kind == 'stage_done':
+        problem = shipment_stages.complete_shipment_stage(
+            shipment, stage, user, source
+        )
+        if problem is None:
+            return True, 'Recorded %s for %d containers.' % (
+                stage.label, count)
+        if problem == shipment_stages.ALREADY_RECORDED:
+            return False, problem
+        return False, 'Refused %s: %s' % (stage.label, problem)
+    if kind == 'select_optional':
+        if not stage.is_optional or stage.key not in OPTIONAL_STAGE_KEYS:
+            return False, 'Unknown shipment step.'
+        existing = StageEvent.objects.filter(
+            container__shipment=shipment, stage=stage
+        ).values_list('container_id', flat=True)
+        lacking = shipment.containers.exclude(pk__in=existing)
+        if not lacking.exists():
+            return False, shipment_stages.ALREADY_RECORDED
+        with transaction.atomic():
+            for container in lacking:
+                StageEvent.objects.get_or_create(
+                    container=container, stage=stage
+                )
+            AuditLog.objects.create(
+                shipment=shipment,
+                container=None,
+                user=user,
+                action='stage_selected',
+                old_value='',
+                new_value='%s for %d containers'
+                % (stage.label, lacking.count()),
+                source=source,
+            )
+        return True, 'Selected %s for %d containers.' % (
+            stage.label, count)
+    return False, 'Unknown change for %s.' % shipment.bl_number
+
+
+def dry_run_items(company, user, items):
+    """Validate pending items in order inside a rolled-back transaction.
+
+    Later items see the effect of earlier ones. Failing items are
+    dropped from the list; returns {original index: problem sentence}.
+    Nothing is ever written.
+    """
+    failures = {}
+    when = timezone.now()
+    with transaction.atomic():
+        for index, item in enumerate(items):
+            ok, message = apply_proposal_item(
+                company, user, item, when, AuditLog.Source.ASSISTANT
+            )
+            if not ok:
+                failures[index] = message
+        transaction.set_rollback(True)
+    kept = [
+        item for index, item in enumerate(items) if index not in failures
+    ]
+    items[:] = kept
+    return failures
 
 
 def ask_clarification(question):
