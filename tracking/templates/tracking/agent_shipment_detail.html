@@ -12,6 +12,7 @@
 <button type="button" id="copy-code-btn" class="small-btn">Copy code</button></p>
 <p id="copy-msg">{{ message }}</p>
 <p><button type="button" id="copy-msg-btn" class="small-btn">Copy message</button></p>
+<p><a href="{% url 'agent_shipment_delete' pk=shipment.pk %}">Delete</a></p>
 </div>
 <div class="card">
 <h2>Update stage</h2>

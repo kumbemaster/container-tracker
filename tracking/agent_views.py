@@ -1,17 +1,23 @@
 import json
 import logging
 import mimetypes
+import re
 import secrets
 import struct
+from datetime import timedelta
 from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import login
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import LoginView
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
-from django.db import transaction
-from django.db.models import Case, Count, F, Max, When
+from django.db import IntegrityError, transaction
+from django.db.models import Case, Count, F, Max, Q, When
 from django.forms.utils import ErrorDict
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -29,6 +35,8 @@ from .ai.extract_bl import extract_shipment
 from .ai.transcribe import transcribe_audio
 from .forms import ShipmentForm, normalise_number
 from .models import (
+    AccessAttempt,
+    AgentCompany,
     AuditLog,
     Container,
     Document,
@@ -99,6 +107,120 @@ class AgentLoginView(LoginView):
         form.add_error(None, LOGIN_FAILURE_MESSAGE)
         return super().form_invalid(form)
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['allow_signup'] = getattr(
+            settings, 'ALLOW_AGENT_SIGNUP', True
+        )
+        return context
+
+
+SIGNUP_LIMIT = 10
+SIGNUP_WINDOW_HOURS = 1
+SIGNUP_LOCKED_MESSAGE = (
+    'Too many sign-up attempts from this address. '
+    'Please try again later.'
+)
+COMPANY_TAKEN_MESSAGE = (
+    'That company name is already registered. If it is your company, '
+    'ask its owner to give you access.'
+)
+USERNAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _signup_key(request):
+    return 'signup-ip:%s' % request.META.get('REMOTE_ADDR', '')
+
+
+def _signup_locked(key):
+    since = timezone.now() - timedelta(hours=SIGNUP_WINDOW_HOURS)
+    return (
+        AccessAttempt.objects.filter(
+            key=key, created_at__gte=since
+        ).count()
+        >= SIGNUP_LIMIT
+    )
+
+
+def _validate_signup(company_name, username, password, confirm):
+    if not 2 <= len(company_name) <= 120:
+        return 'Company name must be 2 to 120 characters.'
+    if not 3 <= len(username) <= 30:
+        return 'Username must be 3 to 30 characters.'
+    if not USERNAME_RE.match(username):
+        return (
+            'Username may only contain letters, digits, dots, '
+            'underscores and hyphens.'
+        )
+    if AgentCompany.objects.filter(name__iexact=company_name).exists():
+        return COMPANY_TAKEN_MESSAGE
+    if User.objects.filter(username__iexact=username).exists():
+        return 'That username is taken. Please choose another.'
+    if password != confirm:
+        return 'Passwords do not match.'
+    try:
+        validate_password(
+            password, user=User(username=username)
+        )
+    except ValidationError as exc:
+        return ' '.join(exc.messages)
+    return None
+
+
+def signup(request):
+    if not getattr(settings, 'ALLOW_AGENT_SIGNUP', True):
+        raise Http404
+    error = None
+    values = {'company': '', 'username': ''}
+    if request.method == 'POST':
+        key = _signup_key(request)
+        if _signup_locked(key):
+            error = SIGNUP_LOCKED_MESSAGE
+        else:
+            AccessAttempt.objects.create(key=key)
+            company_name = (request.POST.get('company') or '').strip()
+            username = (request.POST.get('username') or '').strip()
+            password = request.POST.get('password') or ''
+            confirm = request.POST.get('confirm') or ''
+            values = {'company': company_name, 'username': username}
+            error = _validate_signup(
+                company_name, username, password, confirm
+            )
+            if error is None:
+                try:
+                    with transaction.atomic():
+                        user = User.objects.create_user(
+                            username=username, password=password
+                        )
+                        company = AgentCompany.objects.create(
+                            name=company_name
+                        )
+                        StaffMember.objects.create(
+                            user=user,
+                            agent_company=company,
+                            role=StaffMember.Role.OWNER,
+                        )
+                except IntegrityError:
+                    error = _validate_signup(
+                        company_name, username, password, confirm
+                    ) or (
+                        'Could not create your account. '
+                        'Please try again.'
+                    )
+                else:
+                    login(request, user)
+                    messages.success(
+                        request,
+                        'Welcome, %s. Your company %s is ready.'
+                        % (username, company_name),
+                    )
+                    return redirect('agent_shipments')
+    return render(
+        request,
+        'tracking/agent_signup.html',
+        {'error': error, 'values': values},
+    )
+
 
 def _current_label(container):
     steps = timeline_helpers.build_timeline(container)
@@ -123,7 +245,10 @@ def _current_label_and_order(container, order_by_key):
 def shipment_list(request):
     show_closed = request.GET.get('show') == 'closed'
     shipments = (
-        Shipment.objects.filter(importer__agent_company=request.agent_company)
+        Shipment.objects.filter(
+            importer__agent_company=request.agent_company,
+            deleted_at__isnull=True,
+        )
         .select_related('importer')
         .prefetch_related('containers')
         .annotate(
@@ -333,7 +458,10 @@ def _link_scan_document(request, company, shipment):
 
 def _scoped_shipment(request, pk):
     return get_object_or_404(
-        Shipment, pk=pk, importer__agent_company=request.agent_company
+        Shipment,
+        pk=pk,
+        importer__agent_company=request.agent_company,
+        deleted_at__isnull=True,
     )
 
 
@@ -762,12 +890,105 @@ def shipment_detail(request, pk):
 
 
 @agent_required
+def shipment_delete(request, pk):
+    shipment = _scoped_shipment(request, pk)
+    if request.method == 'POST':
+        shipment.deleted_at = timezone.now()
+        shipment.save(update_fields=['deleted_at'])
+        _log(
+            request, shipment, None, 'shipment_deleted', '',
+            shipment.bl_number,
+        )
+        messages.success(
+            request,
+            'Shipment %s deleted.' % shipment.bl_number,
+        )
+        return redirect('agent_shipments')
+    return render(
+        request,
+        'tracking/agent_shipment_delete.html',
+        {
+            'shipment': shipment,
+            'containers': list(
+                shipment.containers.order_by('number')
+            ),
+        },
+    )
+
+
+@agent_required
+@require_GET
+def deleted_list(request):
+    shipments = (
+        Shipment.objects.filter(
+            importer__agent_company=request.agent_company,
+            deleted_at__isnull=False,
+        )
+        .select_related('importer')
+        .prefetch_related('containers')
+        .order_by('-deleted_at')
+    )
+    return render(
+        request,
+        'tracking/agent_shipments_deleted.html',
+        {'shipments': shipments},
+    )
+
+
+def _active_bl_clash(company, bl_number, exclude_pk):
+    """True when another active shipment uses this BL number."""
+    wanted = re.sub(r'\s+', '', bl_number or '').upper()
+    existing = Shipment.objects.filter(
+        importer__agent_company=company,
+        deleted_at__isnull=True,
+    ).exclude(pk=exclude_pk).values_list('bl_number', flat=True)
+    return any(
+        re.sub(r'\s+', '', bl or '').upper() == wanted for bl in existing
+    )
+
+
+@agent_required
+@require_POST
+def shipment_restore(request, pk):
+    shipment = get_object_or_404(
+        Shipment, pk=pk, importer__agent_company=request.agent_company
+    )
+    if shipment.deleted_at is None:
+        return redirect('agent_shipment_detail', pk=shipment.pk)
+    if _active_bl_clash(
+        request.agent_company, shipment.bl_number, shipment.pk
+    ):
+        messages.error(
+            request,
+            'Cannot restore shipment %s: an active shipment already '
+            'uses this BL number.' % shipment.bl_number,
+        )
+        return redirect('agent_deleted_shipments')
+    shipment.deleted_at = None
+    shipment.save(update_fields=['deleted_at'])
+    _log(
+        request, shipment, None, 'shipment_restored', '',
+        shipment.bl_number,
+    )
+    messages.success(
+        request,
+        'Shipment %s restored.' % shipment.bl_number,
+    )
+    return redirect('agent_shipment_detail', pk=shipment.pk)
+
+
+@agent_required
 @require_GET
 def importer_list(request):
     company = request.agent_company
     importers = (
         Importer.objects.filter(agent_company=company)
-        .annotate(shipment_count=Count('shipment'))
+        .annotate(
+            shipment_count=Count(
+                'shipment',
+                filter=Q(shipment__deleted_at__isnull=True),
+            )
+        )
         .order_by('name')
     )
     new_importer = None
@@ -951,7 +1172,9 @@ def _validated_page_context(company, context):
         return None
     shipment = (
         Shipment.objects.filter(
-            pk=shipment_id, importer__agent_company=company
+            pk=shipment_id,
+            importer__agent_company=company,
+            deleted_at__isnull=True,
         )
         .select_related('importer')
         .first()

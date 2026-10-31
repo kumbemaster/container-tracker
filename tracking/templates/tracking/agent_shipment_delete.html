@@ -1,0 +1,21 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Delete shipment {{ shipment.bl_number }}{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Delete shipment <span class="mono">{{ shipment.bl_number }}</span>?</h1>
+<p>Importer: {{ shipment.importer.name }}</p>
+<p>Containers:
+{% for container in containers %}<span class="mono">{{ container.number }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+</p>
+<p>This removes the shipment from your list and from the importer's view. The importer will no longer be able to track it. You can restore it later from Deleted shipments.</p>
+<form method="post" action="{% url 'agent_shipment_delete' pk=shipment.pk %}">
+{% csrf_token %}
+<button type="submit" class="danger">Delete shipment</button>
+</form>
+<p><a href="{% url 'agent_shipment_detail' pk=shipment.pk %}">Cancel</a></p>
+</div>
+</main>
+{% endblock %}

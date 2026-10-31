@@ -17,6 +17,9 @@
 <input id="id_password" type="password" name="password" autocomplete="current-password" required>
 <button type="submit">Log in</button>
 </form>
+{% if allow_signup %}
+<p><a href="{% url 'agent_signup' %}">Create an account</a></p>
+{% endif %}
 </div>
 </main>
 {% endblock %}

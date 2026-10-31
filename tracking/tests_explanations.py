@@ -33,6 +33,20 @@ def _model_reply(text):
 
 
 class LoadExplanationsTests(TestCase):
+    def _backup_final(self):
+        path = CONTENT_DIR / 'stage_explanations_pcm.json'
+        old = path.read_text(encoding='utf-8') if path.exists() else None
+        self.addCleanup(self._restore_final, old)
+        return path
+
+    def _restore_final(self, old):
+        path = CONTENT_DIR / 'stage_explanations_pcm.json'
+        if old is None:
+            if path.exists():
+                os.remove(path)
+        else:
+            path.write_text(old, encoding='utf-8')
+
     def test_loads_english(self):
         out = StringIO()
         call_command('load_stage_explanations', stdout=out)
@@ -47,14 +61,18 @@ class LoadExplanationsTests(TestCase):
 
     def test_idempotent(self):
         call_command('load_stage_explanations', stdout=StringIO())
+        before = StageExplanation.objects.count()
         call_command('load_stage_explanations', stdout=StringIO())
-        self.assertEqual(StageExplanation.objects.count(), 13)
+        self.assertEqual(StageExplanation.objects.count(), before)
+        self.assertEqual(
+            StageExplanation.objects.filter(lang='en').count(), 13
+        )
 
     def test_refuses_mismatched_keys(self):
-        path = CONTENT_DIR / 'stage_explanations_pcm.json'
-        data = {'not_a_stage': 'sometext'}
-        path.write_text(json.dumps(data), encoding='utf-8')
-        self.addCleanup(os.remove, path)
+        path = self._backup_final()
+        path.write_text(
+            json.dumps({'not_a_stage': 'sometext'}), encoding='utf-8'
+        )
         with self.assertRaises(Exception):
             call_command('load_stage_explanations', stdout=StringIO())
         self.assertEqual(
@@ -62,12 +80,11 @@ class LoadExplanationsTests(TestCase):
         )
 
     def test_refuses_overlong_text(self):
-        path = CONTENT_DIR / 'stage_explanations_pcm.json'
+        path = self._backup_final()
         keys = list(Stage.objects.values_list('key', flat=True))
         data = {key: 'x' for key in keys}
         data[keys[0]] = 'y' * 301
         path.write_text(json.dumps(data), encoding='utf-8')
-        self.addCleanup(os.remove, path)
         with self.assertRaises(Exception):
             call_command('load_stage_explanations', stdout=StringIO())
         self.assertEqual(
@@ -83,7 +100,12 @@ class GeneratePidginTests(TestCase):
             self._had_draft
         ) else None
         self.addCleanup(self._restore_draft)
-        self.assertFalse(_final_path().exists())
+        final = _final_path()
+        self._had_final = final.exists()
+        self._old_final = final.read_text(encoding='utf-8') if (
+            self._had_final
+        ) else None
+        self.addCleanup(self._restore_final)
 
     def _restore_draft(self):
         draft = _draft_path()
@@ -91,6 +113,17 @@ class GeneratePidginTests(TestCase):
             draft.write_text(self._old_draft, encoding='utf-8')
         elif draft.exists():
             os.remove(draft)
+
+    def _restore_final(self):
+        final = _final_path()
+        if self._had_final:
+            final.write_text(self._old_final, encoding='utf-8')
+        elif final.exists():
+            os.remove(final)
+
+    def _final_content(self):
+        final = _final_path()
+        return final.read_text(encoding='utf-8') if final.exists() else None
 
     def _fake_create(self, replies):
         create = MagicMock()
@@ -121,7 +154,7 @@ class GeneratePidginTests(TestCase):
         )
         draft = json.loads(_draft_path().read_text(encoding='utf-8'))
         self.assertEqual(draft, {'duty_paid': 'Na wen dem pay duty.'})
-        self.assertFalse(_final_path().exists())
+        self.assertEqual(self._final_content(), self._old_final)
         self.assertIn('duty_paid: ok', out.getvalue())
         self.assertNotIn('sentinel-baseten-xyz', out.getvalue())
 
@@ -147,7 +180,7 @@ class GeneratePidginTests(TestCase):
         self.assertEqual(
             draft, {'manifest_available': 'Na manifest don ready.'}
         )
-        self.assertFalse(_final_path().exists())
+        self.assertEqual(self._final_content(), self._old_final)
         self.assertIn('manifest_available: ok', out.getvalue())
 
     def test_explicit_provider_flag_wins(self):
@@ -196,10 +229,10 @@ class ImporterExplanationPageTests(TestCase):
         call_command('seed_demo')
         call_command('load_stage_explanations', stdout=StringIO())
         for stage in Stage.objects.all():
-            StageExplanation.objects.create(
+            StageExplanation.objects.update_or_create(
                 stage=stage,
                 lang='pcm',
-                text='Pidgin for %s.' % stage.key,
+                defaults={'text': 'Pidgin for %s.' % stage.key},
             )
         self.client.post(
             '/track/verify/', {'q': 'CSQU3054383', 'code': '482910'}
@@ -218,18 +251,42 @@ class ImporterExplanationPageTests(TestCase):
         self.assertContains(response, 'localStorage')
         self.assertContains(response, 'listen-btn')
         self.assertContains(response, 'speechSynthesis')
-        self.assertContains(response, 'info-btn')
+        self.assertContains(response, 'i-circle')
+        self.assertContains(response, 'What does this mean?')
+        self.assertNotContains(response, 'info-btn')
+
+    def test_each_step_is_one_details_with_one_summary(self):
+        response = self.client.get('/s/CSQU3054383/')
+        html = response.content.decode()
+        total = html.count('<details class="step"')
+        self.assertGreater(total, 1)
+        self.assertEqual(
+            html.count('<summary class="step-summary"'), total
+        )
 
     def test_current_step_open_others_closed(self):
         response = self.client.get('/s/CSQU3054383/')
         html = response.content.decode()
-        self.assertEqual(html.count('<details class="step-info" open>'), 1)
-        self.assertGreater(
-            html.count('<details class="step-info">'), 1
+        self.assertEqual(html.count('<details class="step" open>'), 1)
+        total = html.count('<details class="step"')
+        self.assertGreater(total - 1, 1)
+        open_at = html.index('<details class="step" open>')
+        summary_end = html.index('</summary>', open_at)
+        self.assertIn(
+            'Shipping line processed', html[open_at:summary_end]
         )
-        open_at = html.index('<details class="step-info" open>')
-        label_at = html.index('Shipping line processed')
-        self.assertLess(label_at, open_at)
+
+    def test_explanation_and_listen_inside_details(self):
+        response = self.client.get('/s/CSQU3054383/')
+        html = response.content.decode()
+        self.assertRegex(
+            html,
+            r'(?s)<details class="step"[^>]*>.*?'
+            r'<div class="step-info-body">.*?listen-btn.*?</details>',
+        )
+        self.assertContains(
+            response, 'class="i-circle" aria-hidden="true"'
+        )
 
     def test_pidgin_falls_back_to_english(self):
         StageExplanation.objects.filter(

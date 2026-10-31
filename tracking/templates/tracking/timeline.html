@@ -105,18 +105,6 @@
       });
     });
   }
-  Array.prototype.forEach.call(
-    document.querySelectorAll('.info-btn'),
-    function (btn) {
-      btn.addEventListener('click', function () {
-        var item = btn.closest('li');
-        var box = item ? item.querySelector('details.step-info') : null;
-        if (!box) return;
-        box.open = !box.open;
-        btn.setAttribute('aria-expanded', box.open ? 'true' : 'false');
-      });
-    }
-  );
 })();
 // Listen uses the browser Web Speech API only: a built-in browser
 // feature for reading text aloud, not a model call, and it makes no

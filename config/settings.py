@@ -146,6 +146,9 @@ BASETEN_API_KEY = os.environ.get('BASETEN_API_KEY', '')
 META_ASR_HINTS_ENABLED = (
     os.environ.get('META_ASR_HINTS_ENABLED', 'True') == 'True'
 )
+ALLOW_AGENT_SIGNUP = (
+    os.environ.get('ALLOW_AGENT_SIGNUP', 'True') == 'True'
+)
 
 # Private upload storage. Files under MEDIA_ROOT are served only through
 # the company-checked document view, never through static or media URLs.

@@ -14,6 +14,11 @@ urlpatterns = [
         name='agent_login',
     ),
     path(
+        'agent/signup/',
+        agent_views.signup,
+        name='agent_signup',
+    ),
+    path(
         'agent/logout/',
         LogoutView.as_view(next_page='/'),
         name='agent_logout',
@@ -34,9 +39,24 @@ urlpatterns = [
         name='agent_shipment_scan',
     ),
     path(
+        'agent/shipments/deleted/',
+        agent_views.deleted_list,
+        name='agent_deleted_shipments',
+    ),
+    path(
         'agent/shipments/<int:pk>/',
         agent_views.shipment_detail,
         name='agent_shipment_detail',
+    ),
+    path(
+        'agent/shipments/<int:pk>/delete/',
+        agent_views.shipment_delete,
+        name='agent_shipment_delete',
+    ),
+    path(
+        'agent/shipments/<int:pk>/restore/',
+        agent_views.shipment_restore,
+        name='agent_shipment_restore',
     ),
     path(
         'agent/shipments/<int:pk>/stages/update/',

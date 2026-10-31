@@ -40,6 +40,7 @@ class Shipment(models.Model):
     terminal_free_days = models.PositiveIntegerField(null=True, blank=True)
     return_window_days = models.PositiveIntegerField(default=14)
     closed_at = models.DateTimeField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

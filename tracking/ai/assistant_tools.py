@@ -158,7 +158,9 @@ def _shipment_scope(company, shipment_id):
         return None
     return (
         Shipment.objects.filter(
-            pk=pk, importer__agent_company=company
+            pk=pk,
+            importer__agent_company=company,
+            deleted_at__isnull=True,
         )
         .select_related('importer')
         .first()
@@ -215,7 +217,9 @@ def find_shipments(company, query):
     spoken = normalise_spoken_query(text)
     shipments = (
         Shipment.objects.filter(
-            importer__agent_company=company, closed_at__isnull=True
+            importer__agent_company=company,
+            closed_at__isnull=True,
+            deleted_at__isnull=True,
         )
         .select_related('importer')
         .prefetch_related('containers')
@@ -603,6 +607,8 @@ def apply_proposal_item(company, user, item, when, source):
     ).first()
     if shipment is None:
         return False, 'Shipment not found for one item.'
+    if shipment.deleted_at is not None:
+        return False, 'This shipment was deleted.'
     if item.get('whole_shipment'):
         return _apply_whole_item(company, user, shipment, item, source)
     container = shipment.containers.filter(

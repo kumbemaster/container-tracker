@@ -1,0 +1,39 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Deleted shipments{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Deleted shipments</h1>
+{% if messages %}
+{% for production_message in messages %}
+<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+{% endfor %}
+{% endif %}
+{% if shipments %}
+<table class="agent-table">
+<thead>
+<tr><th>BL number</th><th>Importer</th><th>Deleted</th><th></th></tr>
+</thead>
+<tbody>
+{% for shipment in shipments %}
+<tr>
+<td class="mono">{{ shipment.bl_number }}</td>
+<td>{{ shipment.importer.name }}</td>
+<td>{{ shipment.deleted_at|date:"j M Y, H:i" }}</td>
+<td><form method="post" action="{% url 'agent_shipment_restore' pk=shipment.pk %}">
+{% csrf_token %}
+<button type="submit" class="small-btn">Restore</button>
+</form></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>No deleted shipments.</p>
+{% endif %}
+<p><a href="{% url 'agent_shipments' %}">Back to shipments</a></p>
+</div>
+</main>
+{% endblock %}

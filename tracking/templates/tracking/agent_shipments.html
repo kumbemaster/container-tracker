@@ -7,6 +7,11 @@
 {% include "tracking/_assistant.html" %}
 <div class="card">
 <h1>Shipments</h1>
+{% if messages %}
+{% for production_message in messages %}
+<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+{% endfor %}
+{% endif %}
 <p><a href="{% url 'agent_shipment_new' %}">New shipment</a> · <a href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if rows %}
 <table class="agent-table">
@@ -21,18 +26,20 @@
 <td>{{ row.shipment.container_count }}</td>
 <td>{{ row.current_step }}</td>
 <td>{% if row.days_since_update is None %}—{% elif row.days_since_update == 0 %}today{% elif row.days_since_update == 1 %}1 day ago{% else %}{{ row.days_since_update }} days ago{% endif %}</td>
-<td><a href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a></td>
+<td><a href="{% url 'agent_shipment_detail' pk=row.shipment.pk %}">Open</a> · <a href="{% url 'agent_shipment_delete' pk=row.shipment.pk %}">Delete</a></td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
 {% else %}
 <p>No shipments yet.</p>
+<p><a href="{% url 'agent_shipment_new' %}">New shipment</a> — enter the BL number and containers by hand.</p>
+<p><a href="{% url 'agent_shipment_scan' %}">Scan a BL</a> — upload a photo of the bill of lading to prefill the form.</p>
 {% endif %}
 {% if show_closed %}
-<p><a href="{% url 'agent_shipments' %}">Hide closed shipments</a></p>
+<p><a href="{% url 'agent_shipments' %}">Hide closed shipments</a> · <a href="{% url 'agent_deleted_shipments' %}">Deleted shipments</a></p>
 {% else %}
-<p><a href="{% url 'agent_shipments' %}?show=closed">Show closed shipments</a></p>
+<p><a href="{% url 'agent_shipments' %}?show=closed">Show closed shipments</a> · <a href="{% url 'agent_deleted_shipments' %}">Deleted shipments</a></p>
 {% endif %}
 </div>
 </main>

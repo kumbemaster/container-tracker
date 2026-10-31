@@ -1,0 +1,27 @@
+{% extends "tracking/base.html" %}
+
+{% block title %}Create an agent account{% endblock %}
+
+{% block content %}
+<main class="wrap">
+<div class="card">
+<h1>Create an account</h1>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form method="post" action="{% url 'agent_signup' %}">
+{% csrf_token %}
+<label for="id_company">Company name</label>
+<input id="id_company" type="text" name="company" value="{{ values.company }}" autocomplete="organization" required>
+<label for="id_username">Username</label>
+<input id="id_username" type="text" name="username" value="{{ values.username }}" autocomplete="username" required>
+<label for="id_password">Password</label>
+<input id="id_password" type="password" name="password" autocomplete="new-password" required>
+<label for="id_confirm">Confirm password</label>
+<input id="id_confirm" type="password" name="confirm" autocomplete="new-password" required>
+<button type="submit">Create account</button>
+</form>
+<p><a href="{% url 'agent_login' %}">Already have an account? Log in</a></p>
+</div>
+</main>
+{% endblock %}

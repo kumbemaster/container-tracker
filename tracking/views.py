@@ -47,6 +47,12 @@ def _ref_of(target):
     return target.bl_number
 
 
+def _is_deleted(target):
+    if isinstance(target, Container):
+        return target.shipment.deleted_at is not None
+    return target.deleted_at is not None
+
+
 @require_GET
 def search(request):
     response = render(
@@ -59,7 +65,7 @@ def search(request):
 def track(request):
     raw_query = request.POST.get('q', '')
     target = access_helpers.find_target(raw_query)
-    if target is not None:
+    if target is not None and not _is_deleted(target):
         session = _session_from_request(request)
         if session is not None and access_helpers.has_access(
             session, _owner_of(target)
@@ -88,6 +94,8 @@ def verify(request):
         )
         return _private(response)
     target = access_helpers.find_target(raw_query)
+    if target is not None and _is_deleted(target):
+        target = None
     owner = _owner_of(target) if target is not None else None
     if owner is not None and access_helpers.code_is_valid(owner, code):
         session = _session_from_request(request)
@@ -200,7 +208,7 @@ def _panel_context(container, explanations=None):
 @require_GET
 def timeline(request, ref):
     target = access_helpers.find_target(ref)
-    if target is None:
+    if target is None or _is_deleted(target):
         return _private(redirect('/'))
     session = _session_from_request(request)
     if session is None or not access_helpers.has_access(session, _owner_of(target)):

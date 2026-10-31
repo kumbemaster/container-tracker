@@ -65,9 +65,10 @@ class ShipmentForm(forms.Form):
         ).upper()
 
     def _duplicate_shipment(self, bl_number):
-        """Return the pk of this company's shipment with the same BL."""
+        """Return the pk of this company's active shipment with the same BL."""
         for pk, existing in Shipment.objects.filter(
-            importer__agent_company=self.company
+            importer__agent_company=self.company,
+            deleted_at__isnull=True,
         ).values_list('pk', 'bl_number'):
             if re.sub(r'\s+', '', existing or '').upper() == bl_number:
                 return pk
