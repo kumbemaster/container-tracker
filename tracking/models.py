@@ -167,6 +167,21 @@ class StaffMember(models.Model):
         return f'{self.user.username} ({self.agent_company})'
 
 
+class SecurityProfile(models.Model):
+    """Password-recovery security question for an agent user.
+
+    Only the answer hash is stored, never the plain answer.
+    """
+
+    user = models.OneToOneField('auth.User', on_delete=models.CASCADE)
+    question = models.CharField(max_length=200)
+    answer_hash = models.CharField(max_length=128)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return 'Security question for %s' % self.user_id
+
+
 class ProposedAction(models.Model):
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'

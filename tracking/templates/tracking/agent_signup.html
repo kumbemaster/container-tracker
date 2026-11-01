@@ -20,9 +20,34 @@
 <input id="id_password" type="password" name="password" autocomplete="new-password" required>
 <label for="id_confirm">Confirm password</label>
 <input id="id_confirm" type="password" name="confirm" autocomplete="new-password" required>
+<label for="id_question">Security question</label>
+<select id="id_question" name="question" required>
+<option value="">Choose a security question</option>
+{% for index, text in questions %}<option value="{{ index }}">{{ text }}</option>{% endfor %}
+<option value="own">Write my own question</option>
+</select>
+<div id="custom-question" hidden>
+<label for="id_custom_question">Your own question</label>
+<input id="id_custom_question" type="text" name="custom_question" maxlength="200">
+</div>
+<label for="id_answer">Answer</label>
+<input id="id_answer" type="text" name="answer" autocomplete="off" required>
+<p class="help">Choose an answer other people cannot guess from your social media.</p>
 <button type="submit">Create account</button>
 </form>
 <p><a href="{% url 'agent_login' %}">Already have an account? Log in</a></p>
 </div>
 </main>
+<script>
+(function () {
+  var select = document.getElementById('id_question');
+  var box = document.getElementById('custom-question');
+  if (!select || !box) return;
+  function refresh() {
+    box.hidden = select.value !== 'own';
+  }
+  select.addEventListener('change', refresh);
+  refresh();
+})();
+</script>
 {% endblock %}

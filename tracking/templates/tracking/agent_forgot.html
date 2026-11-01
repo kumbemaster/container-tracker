@@ -1,0 +1,23 @@
+{% extends "tracking/base.html" %}
+
+{% block title %}Forgot password{% endblock %}
+
+{% block content %}
+<main class="wrap agent-wrap agent-narrow">
+<div class="card">
+<p><a class="btn btn-secondary" href="{% url 'search' %}">← Back to tracking</a></p>
+<h1>Forgot password?</h1>
+<p class="help">Enter your username. If your account has a security question, you can set a new password.</p>
+{% if error %}
+<p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+<form method="post" action="{% url 'agent_forgot' %}">
+{% csrf_token %}
+<label for="id_username">Username</label>
+<input id="id_username" type="text" name="username" autocomplete="username" required>
+<button type="submit">Continue</button>
+</form>
+<p><a href="{% url 'agent_login' %}">Back to log in</a></p>
+</div>
+</main>
+{% endblock %}

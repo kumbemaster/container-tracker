@@ -109,24 +109,35 @@
     'terminal processed', 'customs examination', 'customs processed',
     'gate out', 'in transit', 'delivered', 'empty container returned'
   ];
-  function esc(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  }
   function showText(text) {
+    // Text only: stage names and numbers become bold runs built
+    // with DOM nodes, never parsed as markup.
     results.textContent = '';
     var box = document.createElement('div');
     box.className = 'reply-panel';
     var p = document.createElement('p');
-    var html = esc(text);
-    STAGE_PHRASES.forEach(function (phrase) {
-      html = html.replace(
-        new RegExp('\\b(' + phrase + ')\\b', 'gi'), '<b>$1</b>'
-      );
-    });
-    p.innerHTML = html.replace(
-      /\b([A-Z]{2,}[A-Z0-9-]*\d[A-Z0-9-]*)\b/g, '<b>$1</b>'
+    var pattern = new RegExp(
+      STAGE_PHRASES.join('|')
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        + '|[A-Z]{2,}[A-Z0-9-]*\\d[A-Z0-9-]*',
+      'gi'
     );
+    var last = 0;
+    var match;
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > last) {
+        p.appendChild(
+          document.createTextNode(text.slice(last, match.index))
+        );
+      }
+      var bold = document.createElement('b');
+      bold.textContent = match[0];
+      p.appendChild(bold);
+      last = match.index + match[0].length;
+      if (match[0].length === 0) pattern.lastIndex += 1;
+    }
+    p.appendChild(document.createTextNode(text.slice(last)));
     box.appendChild(p);
     results.appendChild(box);
   }

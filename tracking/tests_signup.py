@@ -49,6 +49,9 @@ def _signup_data(**overrides):
         'username': 'newuser',
         'password': 'StrongPass123!',
         'confirm': 'StrongPass123!',
+        'question': '0',
+        'custom_question': '',
+        'answer': 'My First School Name',
     }
     data.update(overrides)
     return data

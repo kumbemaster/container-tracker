@@ -80,10 +80,16 @@ def has_access(session, importer):
     ).exists()
 
 
-def is_locked(key):
-    cutoff = timezone.now() - LOCKOUT_WINDOW
+def is_locked(key, limit=None, window=None):
+    limit = MAX_FAILURES if limit is None else limit
+    window = LOCKOUT_WINDOW if window is None else window
+    cutoff = timezone.now() - window
     failures = AccessAttempt.objects.filter(key=key, created_at__gte=cutoff).count()
-    return failures >= MAX_FAILURES
+    return failures >= limit
+
+
+def clear_failures(key):
+    AccessAttempt.objects.filter(key=key).delete()
 
 
 def record_failure(key):

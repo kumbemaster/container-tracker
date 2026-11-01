@@ -24,6 +24,21 @@ urlpatterns = [
         name='agent_logout',
     ),
     path(
+        'agent/forgot/',
+        agent_views.forgot_username,
+        name='agent_forgot',
+    ),
+    path(
+        'agent/forgot/answer/',
+        agent_views.forgot_answer,
+        name='agent_forgot_answer',
+    ),
+    path(
+        'agent/account/',
+        agent_views.account,
+        name='agent_account',
+    ),
+    path(
         'agent/shipments/',
         agent_views.shipment_list,
         name='agent_shipments',

@@ -26,6 +26,9 @@
 <p class="banner {% if production_message.tags %}{{ production_message.tags }}{% endif %}" role="status"><span class="banner-text">{{ production_message }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endfor %}
 {% endif %}
+{% if show_security_notice %}
+<p class="banner info" role="status"><span class="banner-text">Set a <a href="{% url 'agent_account' %}">security question</a> so you can recover your account.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
 {% if rows %}
 <table class="agent-table">
 <thead>

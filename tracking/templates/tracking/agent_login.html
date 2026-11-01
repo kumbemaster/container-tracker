@@ -18,6 +18,10 @@
 <input id="id_password" type="password" name="password" autocomplete="current-password" required>
 <button type="submit">Log in</button>
 </form>
+<p><a href="{% url 'agent_forgot' %}">Forgot password?</a></p>
+{% if reset_done %}
+<p class="banner success" role="status"><span class="banner-text">Password changed. Please log in.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
 {% if allow_signup %}
 <p><a href="{% url 'agent_signup' %}">Create an account</a></p>
 {% endif %}

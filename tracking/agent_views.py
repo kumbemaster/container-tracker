@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -10,7 +12,8 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import login, update_session_auth_hash
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import LoginView
@@ -43,6 +46,7 @@ from .models import (
     Document,
     Importer,
     ProposedAction,
+    SecurityProfile,
     Shipment,
     StaffMember,
     Stage,
@@ -86,7 +90,7 @@ class AgentLoginView(LoginView):
     def _keys(self):
         username = self.request.POST.get('username', '')
         ip_key = 'login-ip:%s' % self.request.META.get('REMOTE_ADDR', '')
-        return ip_key, 'login-user:%s' % username
+        return ip_key, 'login-user:%s' % username.strip().lower()
 
     def post(self, request, *args, **kwargs):
         ip_key, user_key = self._keys()
@@ -113,6 +117,7 @@ class AgentLoginView(LoginView):
         context['allow_signup'] = getattr(
             settings, 'ALLOW_AGENT_SIGNUP', True
         )
+        context['reset_done'] = self.request.GET.get('reset') == '1'
         context['css_version'] = _css_version()
         return context
 
@@ -144,7 +149,15 @@ def _signup_locked(key):
     )
 
 
-def _validate_signup(company_name, username, password, confirm):
+def _validate_signup(
+    company_name,
+    username,
+    password,
+    confirm,
+    question_choice='',
+    custom_question='',
+    answer='',
+):
     if not 2 <= len(company_name) <= 120:
         return 'Company name must be 2 to 120 characters.'
     if not 3 <= len(username) <= 30:
@@ -166,6 +179,11 @@ def _validate_signup(company_name, username, password, confirm):
         )
     except ValidationError as exc:
         return ' '.join(exc.messages)
+    _, security_error = _validate_security(
+        question_choice, custom_question, answer
+    )
+    if security_error is not None:
+        return security_error
     return None
 
 
@@ -184,9 +202,21 @@ def signup(request):
             username = (request.POST.get('username') or '').strip()
             password = request.POST.get('password') or ''
             confirm = request.POST.get('confirm') or ''
+            question_choice = request.POST.get('question') or ''
+            custom_question = request.POST.get('custom_question') or ''
+            answer = request.POST.get('answer') or ''
             values = {'company': company_name, 'username': username}
             error = _validate_signup(
-                company_name, username, password, confirm
+                company_name,
+                username,
+                password,
+                confirm,
+                question_choice,
+                custom_question,
+                answer,
+            )
+            question, _ = _validate_security(
+                question_choice, custom_question, answer
             )
             if error is None:
                 try:
@@ -202,9 +232,22 @@ def signup(request):
                             agent_company=company,
                             role=StaffMember.Role.OWNER,
                         )
+                        SecurityProfile.objects.create(
+                            user=user,
+                            question=question,
+                            answer_hash=make_password(
+                                normalise_answer(answer)
+                            ),
+                        )
                 except IntegrityError:
                     error = _validate_signup(
-                        company_name, username, password, confirm
+                        company_name,
+                        username,
+                        password,
+                        confirm,
+                        question_choice,
+                        custom_question,
+                        answer,
                     ) or (
                         'Could not create your account. '
                         'Please try again.'
@@ -223,6 +266,263 @@ def signup(request):
         {
             'error': error,
             'values': values,
+            'questions': list(enumerate(SECURITY_QUESTIONS)),
+            'css_version': _css_version(),
+        },
+    )
+
+
+SECURITY_QUESTIONS = (
+    'What was the name of your first school?',
+    'What is the name of your favourite teacher?',
+    'In which town did you attend secondary school?',
+    'What was the make of your first car or motorbike?',
+    'What is a phrase only you would know?',
+)
+SECURITY_QUESTION_CUSTOM = 'own'
+
+
+def normalise_answer(raw):
+    """Normalise a security answer before hashing or checking."""
+    text = re.sub(r'\s+', ' ', (raw or '').strip().lower())
+    return re.sub(r'[^a-z0-9 ]', '', text)
+
+
+def _validate_security(question_choice, custom_question, answer):
+    """Return (question, error) for the sign-up security fields."""
+    if question_choice == SECURITY_QUESTION_CUSTOM:
+        question = (custom_question or '').strip()
+        if not 10 <= len(question) <= 200:
+            return (
+                None,
+                'Your own question must be 10 to 200 characters.',
+            )
+    elif question_choice in [
+        str(index) for index in range(len(SECURITY_QUESTIONS))
+    ]:
+        question = SECURITY_QUESTIONS[int(question_choice)]
+    else:
+        return None, 'Choose a security question.'
+    if len(normalise_answer(answer)) < 4:
+        return (
+            None,
+            'The answer must be at least 4 characters.',
+        )
+    return question, None
+
+
+def _client_ip(request):
+    """Return the client IP for rate limiting.
+
+    Uses REMOTE_ADDR only, unless TRUSTED_PROXY_HEADER names a header
+    to trust (default off, so X-Forwarded-For cannot dodge a limit).
+    """
+    header = getattr(settings, 'TRUSTED_PROXY_HEADER', '')
+    if header:
+        value = request.META.get(header, '')
+        if value:
+            return value.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+RESET_GENERIC_MESSAGE = (
+    'We could not reset the password with those details. If you '
+    'cannot recover your account, contact the platform owner.'
+)
+RESET_LOCKED_MESSAGE = 'Too many attempts. Please try again in 15 minutes.'
+RESET_EXPIRY = timedelta(minutes=10)
+RESET_STEP1_LIMIT = 20
+RESET_IP_LIMIT = 10
+RESET_HOUR = timedelta(hours=1)
+
+
+def _reset_fake_question(username):
+    """Deterministic stand-in question that reveals nothing."""
+    digest = hmac.new(
+        settings.SECRET_KEY.encode(),
+        (username or '').encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return SECURITY_QUESTIONS[int(digest, 16) % len(SECURITY_QUESTIONS)]
+
+
+def _reset_keys(request, username):
+    return (
+        'forgot-ip:%s' % _client_ip(request),
+        'forgot-user:%s' % (username or '').strip().lower(),
+    )
+
+
+def forgot_username(request):
+    error = None
+    if request.method == 'POST':
+        key = 'forgot-step1-ip:%s' % _client_ip(request)
+        if access_helpers.is_locked(
+            key, limit=RESET_STEP1_LIMIT, window=RESET_HOUR
+        ):
+            error = RESET_LOCKED_MESSAGE
+        else:
+            access_helpers.record_failure(key)
+            username = (request.POST.get('username') or '').strip()
+            request.session['reset_username'] = username
+            request.session['reset_started'] = (
+                timezone.now().isoformat()
+            )
+            return redirect('agent_forgot_answer')
+    return render(
+        request,
+        'tracking/agent_forgot.html',
+        {'error': error, 'css_version': _css_version()},
+    )
+
+
+def _reset_session(request):
+    username = request.session.get('reset_username') or ''
+    started = request.session.get('reset_started') or ''
+    try:
+        started_at = timezone.datetime.fromisoformat(started)
+    except (TypeError, ValueError):
+        return '', None
+    if timezone.is_naive(started_at):
+        started_at = timezone.make_aware(started_at)
+    if timezone.now() - started_at > RESET_EXPIRY:
+        return '', None
+    return username, started_at
+
+
+def _clear_reset_session(request):
+    for key in ('reset_username', 'reset_started'):
+        request.session.pop(key, None)
+
+
+def forgot_answer(request):
+    username, _ = _reset_session(request)
+    if not username:
+        return redirect('agent_forgot')
+    user = User.objects.filter(username=username).first()
+    try:
+        profile = user.securityprofile if user is not None else None
+    except SecurityProfile.DoesNotExist:
+        profile = None
+    real = profile is not None
+    question = profile.question if real else _reset_fake_question(username)
+    error = None
+    if request.method == 'POST':
+        ip_key, user_key = _reset_keys(request, username)
+        if access_helpers.is_locked(
+            user_key
+        ) or access_helpers.is_locked(
+            ip_key, limit=RESET_IP_LIMIT, window=RESET_HOUR
+        ):
+            error = RESET_LOCKED_MESSAGE
+        else:
+            answer = request.POST.get('answer') or ''
+            new_password = request.POST.get('new_password') or ''
+            confirm = request.POST.get('confirm') or ''
+            if real:
+                passed = check_password(
+                    normalise_answer(answer), profile.answer_hash
+                )
+            else:
+                make_password('forgot-password-dummy-check')
+                passed = False
+            if not passed:
+                access_helpers.record_failure(ip_key)
+                access_helpers.record_failure(user_key)
+                error = RESET_GENERIC_MESSAGE
+            elif new_password != confirm:
+                error = 'Passwords do not match.'
+            else:
+                try:
+                    validate_password(new_password, user=user)
+                except ValidationError as exc:
+                    error = ' '.join(exc.messages)
+                else:
+                    user.set_password(new_password)
+                    user.save()
+                    access_helpers.clear_failures(user_key)
+                    _clear_reset_session(request)
+                    return redirect(
+                        '%s?reset=1' % reverse('agent_login')
+                    )
+    return render(
+        request,
+        'tracking/agent_forgot_answer.html',
+        {
+            'error': error,
+            'question': question,
+            'css_version': _css_version(),
+        },
+    )
+
+
+@agent_required
+def account(request):
+    try:
+        profile = request.user.securityprofile
+    except SecurityProfile.DoesNotExist:
+        profile = None
+    password_error = None
+    password_done = False
+    question_error = None
+    question_done = False
+    if request.method == 'POST':
+        which = request.POST.get('form')
+        current = request.POST.get('current_password') or ''
+        if not request.user.check_password(current):
+            error = 'The current password is not correct.'
+            if which == 'question':
+                question_error = error
+            else:
+                password_error = error
+        elif which == 'question':
+            question, question_error = _validate_security(
+                request.POST.get('question') or '',
+                request.POST.get('custom_question') or '',
+                request.POST.get('answer') or '',
+            )
+            if question_error is None:
+                SecurityProfile.objects.update_or_create(
+                    user=request.user,
+                    defaults={
+                        'question': question,
+                        'answer_hash': make_password(
+                            normalise_answer(
+                                request.POST.get('answer') or ''
+                            )
+                        ),
+                    },
+                )
+                question_done = True
+        else:
+            new_password = request.POST.get('new_password') or ''
+            if new_password != (request.POST.get('confirm') or ''):
+                password_error = 'Passwords do not match.'
+            else:
+                try:
+                    validate_password(new_password, user=request.user)
+                except ValidationError as exc:
+                    password_error = ' '.join(exc.messages)
+                else:
+                    request.user.set_password(new_password)
+                    request.user.save()
+                    update_session_auth_hash(request, request.user)
+                    password_done = True
+    else:
+        try:
+            profile = request.user.securityprofile
+        except SecurityProfile.DoesNotExist:
+            profile = None
+    return render(
+        request,
+        'tracking/agent_account.html',
+        {
+            'profile': profile,
+            'password_error': password_error,
+            'password_done': password_done,
+            'question_error': question_error,
+            'question_done': question_done,
+            'questions': list(enumerate(SECURITY_QUESTIONS)),
             'css_version': _css_version(),
         },
     )
@@ -286,6 +586,9 @@ def shipment_list(request):
         {
             'rows': rows,
             'show_closed': show_closed,
+            'show_security_notice': not SecurityProfile.objects.filter(
+                user=request.user
+            ).exists(),
             'css_version': _css_version(),
         },
     )
@@ -1161,10 +1464,13 @@ def document_file(request, pk):
         Document, pk=pk, company=request.agent_company
     )
     content_type, _ = mimetypes.guess_type(document.file.name)
-    return FileResponse(
+    response = FileResponse(
         document.file.open('rb'),
         content_type=content_type or 'application/octet-stream',
     )
+    response['Content-Disposition'] = 'attachment; filename="document"'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @agent_required

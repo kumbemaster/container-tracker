@@ -1,0 +1,73 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Account{% endblock %}
+
+{% block content %}
+<main class="wrap agent-wrap agent-narrow">
+<div class="card">
+<h1>Account</h1>
+<h2>Change password</h2>
+{% if password_done %}
+<p class="banner success" role="status"><span class="banner-text">Password changed.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+{% if password_error %}
+<p class="banner error" role="status"><span class="banner-text">{{ password_error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+<form method="post" action="{% url 'agent_account' %}">
+{% csrf_token %}
+<input type="hidden" name="form" value="password">
+<label for="id_current_password">Current password</label>
+<input id="id_current_password" type="password" name="current_password" autocomplete="current-password" required>
+<label for="id_new_password">New password</label>
+<input id="id_new_password" type="password" name="new_password" autocomplete="new-password" required>
+<label for="id_confirm">Confirm new password</label>
+<input id="id_confirm" type="password" name="confirm" autocomplete="new-password" required>
+<button type="submit">Change password</button>
+</form>
+</div>
+<div class="card">
+<h2>Security question</h2>
+{% if profile %}
+<p class="help">Current question: {{ profile.question }}</p>
+{% endif %}
+{% if question_done %}
+<p class="banner success" role="status"><span class="banner-text">Security question saved.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+{% if question_error %}
+<p class="banner error" role="status"><span class="banner-text">{{ question_error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+<form method="post" action="{% url 'agent_account' %}">
+{% csrf_token %}
+<input type="hidden" name="form" value="question">
+<label for="id_q_current">Current password</label>
+<input id="id_q_current" type="password" name="current_password" autocomplete="current-password" required>
+<label for="id_question">Security question</label>
+<select id="id_question" name="question" required>
+<option value="">Choose a security question</option>
+{% for index, text in questions %}<option value="{{ index }}">{{ text }}</option>{% endfor %}
+<option value="own">Write my own question</option>
+</select>
+<div id="custom-question" hidden>
+<label for="id_custom_question">Your own question</label>
+<input id="id_custom_question" type="text" name="custom_question" maxlength="200">
+</div>
+<label for="id_answer">Answer</label>
+<input id="id_answer" type="text" name="answer" autocomplete="off" required>
+<p class="help">Choose an answer other people cannot guess from your social media.</p>
+<button type="submit">Save security question</button>
+</form>
+</div>
+</main>
+<script>
+(function () {
+  var select = document.getElementById('id_question');
+  var box = document.getElementById('custom-question');
+  if (!select || !box) return;
+  function refresh() {
+    box.hidden = select.value !== 'own';
+  }
+  select.addEventListener('change', refresh);
+  refresh();
+})();
+</script>
+{% endblock %}

@@ -7,12 +7,20 @@ from .models import (
     Document,
     Importer,
     ProposedAction,
+    SecurityProfile,
     Shipment,
     StaffMember,
     Stage,
     StageEvent,
     StageExplanation,
 )
+
+
+@admin.register(SecurityProfile)
+class SecurityProfileAdmin(admin.ModelAdmin):
+    fields = ('user', 'question', 'updated_at')
+    readonly_fields = ('updated_at',)
+    list_display = ('user', 'question', 'updated_at')
 
 admin.site.register(AgentCompany)
 admin.site.register(Importer)

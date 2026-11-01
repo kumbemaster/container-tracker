@@ -156,6 +156,19 @@ LOGIN_REDIRECT_URL = '/agent/shipments/'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# Cookie and header hardening. Session and CSRF cookies keep
+# Django's SameSite=Lax default. Proxy headers are never trusted
+# unless TRUSTED_PROXY_HEADER names one (default off).
+TRUSTED_PROXY_HEADER = os.environ.get('TRUSTED_PROXY_HEADER', '')
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+SECURE_HTTPS = os.environ.get('SECURE_HTTPS', '') == '1'
+SECURE_SSL_REDIRECT = SECURE_HTTPS and not DEBUG
+SECURE_HSTS_SECONDS = 31536000 if SECURE_HTTPS and not DEBUG else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HTTPS and not DEBUG
+SECURE_HSTS_PRELOAD = SECURE_HTTPS and not DEBUG
+
 # Meta model API for the BL scan feature. The key is read only from the
 # MODEL_API_KEY environment variable and never stored in code.
 META_API_BASE_URL = os.environ.get(

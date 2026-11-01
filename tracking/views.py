@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from django.conf import settings
@@ -112,7 +113,7 @@ def verify(request):
     code = request.POST.get('code', '')
     query = _normalise(raw_query)
     ip_key = 'ip:%s' % request.META.get('REMOTE_ADDR', '')
-    target_key = 'target:%s' % query
+    target_key = 'target:%s' % re.sub(r'[\s-]', '', query).upper()
     if access_helpers.is_locked(ip_key) or access_helpers.is_locked(target_key):
         response = render(
             request,
