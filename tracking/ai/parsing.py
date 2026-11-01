@@ -40,26 +40,35 @@ def parse_model_json(text):
     return data
 
 
-_SIZE_20_TYPES = {'FT', 'DC', 'GP', 'DV', 'DRY', 'ST', 'STD'}
-_SIZE_40_TYPES = {'FT', 'DC', 'GP', 'DV', 'DRY', 'ST', 'STD'}
+_SIZE_20_TYPES = {'FT', 'DC', 'GP', 'DV', 'DRY', 'DRYVAN', 'ST', 'STD'}
+_SIZE_40_TYPES = {'FT', 'DC', 'GP', 'DV', 'DRY', 'DRYVAN', 'ST', 'STD'}
 
 
 def normalise_size(raw):
-    """Normalise a size string to 20ft, 40ft or 40HC, else None."""
+    """Normalise a size string to 20ft, 40ft or 40HC, else None.
+
+    Tolerates a leading count such as 1X and ignores quotes,
+    apostrophes, spaces, dots, hyphens and slashes. A 40 with a
+    high-cube mark (HC, HQ or HIGH CUBE) gives 40HC; a 40 with
+    another recognised type or nothing gives 40ft; a 20 with a
+    recognised type gives 20ft; anything else gives None.
+    """
     if raw is None:
         return None
-    token = re.sub(r'[^A-Z0-9]', '', str(raw).upper())
+    text = re.sub(r'^\s*\d+\s*[Xx]\s*', '', str(raw))
+    token = re.sub(r'''['"\u2019.\s\-/]''', '', text.upper())
     if not token:
         return None
-    if token.startswith('40'):
-        rest = token[2:]
-        if 'HC' in rest or 'HQ' in rest or 'HIGHCUBE' in rest:
+    if '40' in token:
+        if 'HC' in token or 'HQ' in token or 'HIGHCUBE' in token:
             return '40HC'
-        if rest in _SIZE_40_TYPES:
+        if not token.replace('40', '') or (
+            token.replace('40', '') in _SIZE_40_TYPES
+        ):
             return '40ft'
         return None
-    if token.startswith('20'):
-        if token[2:] in _SIZE_20_TYPES:
+    if '20' in token:
+        if token.replace('20', '') in _SIZE_20_TYPES:
             return '20ft'
         return None
     return None
@@ -122,19 +131,73 @@ def _clean_place(value):
 FIELD_MAP = {
     'port_of_discharge': 'port',
     'place_of_delivery': 'destination_area',
+    'consignee': 'importer_name',
+    'notify_party': 'importer_name',
 }
+
+
+def _compact_letters(text):
+    """Uppercase text reduced to letters only, for phrase matching."""
+    return re.sub(r'[^A-Z]', '', text.upper())
+
+
+def _is_to_order(name):
+    """Check for a to-order consignee (no named company to use)."""
+    compact = _compact_letters(name)
+    return 'TOORDER' in compact or 'ORDEROF' in compact
+
+
+def _is_same_as_consignee(name):
+    """Check for a notify party that just points back at the consignee."""
+    compact = _compact_letters(name)
+    return 'SAMEASCONSIGNEE' in compact or (
+        'SAME' in compact and 'CONSIGNEE' in compact
+    )
+
+
+def _clean_company(name):
+    """Trim a company name and drop one trailing comma or full stop."""
+    return re.sub(r'[,.]\s*$', '', name.strip())
+
+
+def _choose_importer(data):
+    """Pick the importer name from consignee and notify party.
+
+    Returns (name, source) with source 'consignee', 'notify' or None.
+    The consignee wins unless it is empty or a to-order phrase; then
+    the notify party wins unless it is empty or points back at the
+    consignee. Older replies with only importer_name keep it as is
+    with no source. Capitalisation is never changed.
+    """
+    if 'consignee' not in data and 'notify_party' not in data:
+        return _text(data.get('importer_name')), None
+    consignee = _text(data.get('consignee'))
+    notify = _text(data.get('notify_party'))
+    if consignee and not _is_to_order(consignee):
+        return _clean_company(consignee), 'consignee'
+    if notify and not _is_same_as_consignee(notify):
+        name = _clean_company(notify)
+        if not re.match(
+            r'^\s*TO\s+THE\s+ORDER\s+OF\b', name, re.IGNORECASE
+        ):
+            return name, 'notify'
+    return None, None
 
 
 def normalise_extraction(data):
     """Normalise raw extraction data into the shipment form shape.
 
     Returns bl_number, shipping_line, port, destination_area,
-    importer_name, goods_description, containers (a list of number, size
-    and valid) and uncertain (form field names, plus
-    containers[i].number for invalid numbers). Empty strings become
-    None. A missing place of delivery leaves destination_area as None;
-    the port is never copied over. Port and destination_area lose a
-    trailing country, and all-uppercase values become title case.
+    importer_name, importer_source (consignee, notify or None),
+    goods_description, containers (a list of number, size and valid)
+    and uncertain (form field names, plus containers[i].number for
+    invalid numbers). Empty strings become None. A missing place of
+    delivery leaves destination_area as None; the port is never copied
+    over. Port and destination_area lose a trailing country, and
+    all-uppercase values become title case. The importer comes from
+    the consignee unless it is a to-order phrase, then from the
+    notify party; a notify-party name or no name at all flags
+    importer_name as uncertain.
     """
     data = data or {}
     goods = _text(data.get('goods_description'))
@@ -170,12 +233,20 @@ def normalise_extraction(data):
         and 'bl_number' not in uncertain
     ):
         uncertain.append('bl_number')
+    importer_name, importer_source = _choose_importer(data)
+    if (
+        ('consignee' in data or 'notify_party' in data)
+        and (importer_source == 'notify' or importer_name is None)
+        and 'importer_name' not in uncertain
+    ):
+        uncertain.append('importer_name')
     return {
         'bl_number': bl_number,
         'shipping_line': _text(data.get('shipping_line')),
         'port': _clean_place(data.get('port_of_discharge')),
         'destination_area': _clean_place(data.get('place_of_delivery')),
-        'importer_name': _text(data.get('importer_name')),
+        'importer_name': importer_name,
+        'importer_source': importer_source,
         'goods_description': goods,
         'containers': containers,
         'uncertain': uncertain,

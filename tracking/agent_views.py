@@ -303,6 +303,7 @@ def shipment_new(request):
         'prefill': False,
         'scan_document': None,
         'importer_check': False,
+        'importer_source': None,
         'css_version': _css_version(),
     }
     if request.method == 'POST':
@@ -418,6 +419,7 @@ def _apply_scan_prefill(request, company, form, context):
             'prefill': True,
             'scan_document': document_pk,
             'importer_check': 'importer_name' in uncertain,
+            'importer_source': result.get('importer_source'),
         }
     )
 
@@ -443,6 +445,7 @@ def _restore_scan_context(request, company, form, context):
             'prefill': True,
             'scan_document': document_pk,
             'importer_check': 'importer_name' in uncertain,
+            'importer_source': result.get('importer_source'),
         }
     )
 

@@ -19,11 +19,16 @@ logger = logging.getLogger(__name__)
 SYSTEM_INSTRUCTION = (
     'you read shipping documents (a bill of lading or similar); '
     'return ONLY a JSON object with the keys bl_number, shipping_line, '
-    'port_of_discharge, place_of_delivery, importer_name (the consignee), '
-    'goods_description (at most 15 words), containers (a list of objects '
-    'with number and size) and uncertain (names of any fields you are not '
-    'sure of); use null for anything you cannot read clearly; '
-    'never guess a container number.'
+    'port_of_discharge, place_of_delivery, consignee (only the company '
+    'name in the consignee box, without any address, copied as printed), '
+    'notify_party (only the company name in the notify party box, '
+    'without any address, copied as printed), goods_description (at '
+    'most 15 words), containers (a list of objects with number and '
+    'size; return size as the size and type exactly as printed for '
+    'that container, for example 1X40\'HC, copying the text rather '
+    'than interpreting it, and null if none is printed) and uncertain '
+    '(names of any fields you are not sure of); use null for anything '
+    'you cannot read clearly; never guess a container number.'
 )
 
 RETRY_INSTRUCTION = (

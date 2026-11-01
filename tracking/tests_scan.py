@@ -104,6 +104,26 @@ class NormaliseSizeTests(TestCase):
         for raw in ('', 'reefer', '45HC', '20', 'LCL', None):
             self.assertIsNone(normalise_size(raw), raw)
 
+    def test_tolerant_sizes(self):
+        cases = {
+            "1X40'HC": '40HC',
+            "1 x 20' DV": '20ft',
+            '40HQ': '40HC',
+            "40' High Cube": '40HC',
+            '20GP': '20ft',
+            "20' STD": '20ft',
+            '20DC': '20ft',
+            '40 DRY': '40ft',
+            "1X40'HC / SEAL 771201": '40HC',
+            '2 X40HC': '40HC',
+            '40DRYVAN': '40ft',
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(normalise_size(raw), expected, raw)
+
+    def test_45HC_is_none(self):
+        self.assertIsNone(normalise_size('45HC'))
+
 
 class NormaliseExtractionTests(TestCase):
     def test_normalise_extraction(self):
@@ -193,6 +213,230 @@ class NormaliseExtractionTests(TestCase):
             {'bl_number': 'DEM0BL002', 'uncertain': ['bl_number']}
         )
         self.assertEqual(result['uncertain'], ['bl_number'])
+
+    def test_notify_used_for_to_order_consignee(self):
+        result = normalise_extraction(
+            {
+                'consignee': 'TO THE ORDER OF DEMO TRADE BANK PLC',
+                'notify_party': 'DEMO IMPORTER D LTD',
+            }
+        )
+        self.assertEqual(result['importer_name'], 'DEMO IMPORTER D LTD')
+        self.assertEqual(result['importer_source'], 'notify')
+        self.assertIn('importer_name', result['uncertain'])
+
+    def test_normal_consignee_used_as_is(self):
+        result = normalise_extraction(
+            {
+                'consignee': 'Demo Importer B Ltd.',
+                'notify_party': 'Someone Else',
+            }
+        )
+        self.assertEqual(result['importer_name'], 'Demo Importer B Ltd')
+        self.assertEqual(result['importer_source'], 'consignee')
+        self.assertNotIn('importer_name', result['uncertain'])
+
+    def test_to_order_with_same_as_consignee_gives_none(self):
+        result = normalise_extraction(
+            {'consignee': 'To Order', 'notify_party': 'SAME AS CONSIGNEE'}
+        )
+        self.assertIsNone(result['importer_name'])
+        self.assertIsNone(result['importer_source'])
+        self.assertIn('importer_name', result['uncertain'])
+
+    def test_to_order_variants_use_notify(self):
+        for consignee in (
+            'TO ORDER',
+            'to the order of Demo Trade Bank',
+            'ORDER OF SHIPPER',
+            'To Order Of Demo Bank Plc, Lagos.',
+        ):
+            result = normalise_extraction(
+                {'consignee': consignee, 'notify_party': 'Notify Foods'}
+            )
+            self.assertEqual(
+                result['importer_name'], 'Notify Foods', consignee
+            )
+
+    def test_never_returns_to_order_name(self):
+        for data in (
+            {'consignee': 'TO THE ORDER OF DEMO BANK'},
+            {
+                'consignee': 'TO THE ORDER OF DEMO BANK',
+                'notify_party': '',
+            },
+            {
+                'consignee': 'TO THE ORDER OF DEMO BANK',
+                'notify_party': 'SAME AS CONSIGNEE',
+            },
+        ):
+            result = normalise_extraction(data)
+            name = result['importer_name'] or ''
+            self.assertFalse(
+                name.upper().startswith('TO THE ORDER OF'), data
+            )
+
+    def test_company_name_trimmed_without_case_change(self):
+        result = normalise_extraction(
+            {'consignee': '  Demo Importer F Ltd., '}
+        )
+        self.assertEqual(result['importer_name'], 'Demo Importer F Ltd.')
+        self.assertNotIn('importer_name', result['uncertain'])
+
+    def test_replay_carrier_bl_with_to_order_consignee(self):
+        result = normalise_extraction(
+            {
+                'bl_number': 'DEMOBL003',
+                'shipping_line': 'Demo Line',
+                'port_of_discharge': 'Onne, Nigeria',
+                'place_of_delivery': 'Port Harcourt',
+                'consignee': 'TO THE ORDER OF DEMO TRADE BANK PLC',
+                'notify_party': 'DEMO IMPORTER D LTD',
+                'goods_description': 'FROZEN FISH IN CARTONS',
+                'containers': [
+                    {'number': 'MSKU1000000', 'size': "40'HC"},
+                    {'number': 'TCLU2000008', 'size': '40ft'},
+                    {'number': 'MSKU3000000', 'size': "1X40'HC"},
+                    {'number': 'TCLU4000007', 'size': "20' DC"},
+                    {'number': 'OOLU5000000', 'size': '20GP'},
+                    {'number': 'EITU6000001', 'size': '40 DRY'},
+                ],
+                'uncertain': [],
+            }
+        )
+        self.assertEqual(
+            result,
+            {
+                'bl_number': 'DEMOBL003',
+                'shipping_line': 'Demo Line',
+                'port': 'Onne',
+                'destination_area': 'Port Harcourt',
+                'importer_name': 'DEMO IMPORTER D LTD',
+                'importer_source': 'notify',
+                'goods_description': 'FROZEN FISH IN CARTONS',
+                'containers': [
+                    {
+                        'number': 'MSKU1000000',
+                        'size': '40HC',
+                        'valid': True,
+                    },
+                    {
+                        'number': 'TCLU2000008',
+                        'size': '40ft',
+                        'valid': True,
+                    },
+                    {
+                        'number': 'MSKU3000000',
+                        'size': '40HC',
+                        'valid': True,
+                    },
+                    {
+                        'number': 'TCLU4000007',
+                        'size': '20ft',
+                        'valid': True,
+                    },
+                    {
+                        'number': 'OOLU5000000',
+                        'size': '20ft',
+                        'valid': True,
+                    },
+                    {
+                        'number': 'EITU6000001',
+                        'size': '40ft',
+                        'valid': True,
+                    },
+                ],
+                'uncertain': ['importer_name'],
+            },
+        )
+
+    def test_replay_carrier_bl_with_raw_sizes(self):
+        result = normalise_extraction(
+            {
+                'bl_number': 'DEMOBL004',
+                'shipping_line': 'Demo Line',
+                'port_of_discharge': 'Onne',
+                'place_of_delivery': 'PORT HARCOURT, NIGERIA',
+                'consignee': 'TO ORDER',
+                'notify_party': 'DEMO IMPORTER D LTD',
+                'goods_description': 'FROZEN FISH IN CARTONS',
+                'containers': [
+                    {'number': 'MSKU1000000', 'size': "1X40'HC"},
+                    {'number': 'TCLU2000008', 'size': "1 x 20' DV"},
+                    {'number': 'MSKU3000000', 'size': '40HQ'},
+                    {'number': 'TCLU4000007', 'size': '20GP'},
+                    {'number': 'OOLU5000000', 'size': '40 DRY'},
+                    {
+                        'number': 'EITU6000001',
+                        'size': "1X40'HC / SEAL 771201",
+                    },
+                ],
+                'uncertain': [],
+            }
+        )
+        self.assertEqual(
+            [item['size'] for item in result['containers']],
+            ['40HC', '20ft', '40HC', '20ft', '40ft', '40HC'],
+        )
+        self.assertTrue(
+            all(item['valid'] for item in result['containers'])
+        )
+        self.assertEqual(result['destination_area'], 'Port Harcourt')
+        self.assertEqual(result['importer_name'], 'DEMO IMPORTER D LTD')
+        self.assertEqual(result['importer_source'], 'notify')
+        self.assertEqual(result['uncertain'], ['importer_name'])
+
+    def test_replay_direct_consignee_bl(self):
+        result = normalise_extraction(
+            {
+                'bl_number': 'DEMOBL005',
+                'shipping_line': 'Demo Line',
+                'port_of_discharge': 'Apapa',
+                'place_of_delivery': '   ',
+                'consignee': 'Demo Importer E Ltd',
+                'notify_party': None,
+                'goods_description': 'CERAMIC TILES',
+                'containers': [
+                    {'number': 'MSKU1000000', 'size': None},
+                ],
+                'uncertain': [],
+            }
+        )
+        self.assertEqual(
+            result,
+            {
+                'bl_number': 'DEMOBL005',
+                'shipping_line': 'Demo Line',
+                'port': 'Apapa',
+                'destination_area': None,
+                'importer_name': 'Demo Importer E Ltd',
+                'importer_source': 'consignee',
+                'goods_description': 'CERAMIC TILES',
+                'containers': [
+                    {
+                        'number': 'MSKU1000000',
+                        'size': None,
+                        'valid': True,
+                    },
+                ],
+                'uncertain': [],
+            },
+        )
+
+
+class ExtractionInstructionTests(TestCase):
+    def test_instruction_asks_for_consignee_notify_and_raw_sizes(self):
+        from .ai.extract_bl import SYSTEM_INSTRUCTION
+
+        for token in (
+            'consignee',
+            'notify_party',
+            'without any address',
+            'copied as printed',
+            'exactly as printed',
+            "1X40'HC",
+        ):
+            self.assertIn(token, SYSTEM_INSTRUCTION)
 
 
 class PrepareImageTests(TestCase):
@@ -515,6 +759,64 @@ class ScanFlowTests(TestCase):
             '/agent/shipments/new/?scan=%d' % document.pk
         )
         self.assertContains(response, 'value="Brand New Foods"')
+
+    def test_prefill_notify_importer_shows_note_and_check(self):
+        company = self._company('Notify Co')
+        self.client.force_login(self._agent(company, 'notifier'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        result = self._result()
+        result['importer_name'] = 'Notify Foods'
+        result['importer_source'] = 'notify'
+        result['uncertain'] = ['importer_name']
+        session['bl_scan_%d' % document.pk] = result
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        self.assertContains(response, 'value="Notify Foods"')
+        self.assertContains(response, 'Chosen from the notify party.')
+        self.assertContains(response, 'Check this')
+
+    def test_prefill_consignee_importer_has_no_note(self):
+        company = self._company('Consignee Co')
+        self.client.force_login(self._agent(company, 'consignee'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        result = self._result()
+        result['importer_name'] = 'Consignee Foods'
+        result['importer_source'] = 'consignee'
+        result['uncertain'] = []
+        session['bl_scan_%d' % document.pk] = result
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        self.assertContains(response, 'value="Consignee Foods"')
+        self.assertNotContains(response, 'Chosen from the notify party.')
+
+    def test_prefill_unrecognised_size_is_highlighted(self):
+        company = self._company('Size Co')
+        self.client.force_login(self._agent(company, 'sizer'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        result = self._result()
+        result['containers'] = [
+            {'number': 'MSKU1000000', 'size': None, 'valid': True},
+        ]
+        session['bl_scan_%d' % document.pk] = result
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        self.assertContains(response, 'MSKU1000000')
+        self.assertContains(response, 'check-row')
 
     def test_saving_links_document(self):
         company = self._company('Link Co')
