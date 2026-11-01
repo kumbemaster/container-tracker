@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import date, datetime, timedelta
 
 from django.core.management import call_command
@@ -190,6 +191,16 @@ class ImporterFlowTests(TestCase):
             self.assertContains(response, WRONG_DETAILS_MESSAGE)
             for name in self._private_names():
                 self.assertNotContains(response, name)
+
+    def test_verify_error_uses_banner_markup(self):
+        response = self.client.post(
+            '/track/verify/', {'q': 'TCLU1000010', 'code': '000000'}
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, 'class="banner error"')
+        self.assertContains(response, 'class="banner-text"')
+        self.assertLess(html.index('banner-text'), html.index('data-dismiss'))
 
     def test_lockout_after_five_failures(self):
         for _ in range(5):
@@ -721,12 +732,107 @@ class ResultsPagesTests(TestCase):
             self.assertNotIn('value="DEMOBL001"', html)
             self.assertNotIn('value="CSQU3054383"', html)
 
-    def test_container_box_open_by_default(self):
-        response = self.client.get('/s/CSQU3054383/')
+    def test_container_search_shows_whole_shipment(self):
+        response = self.client.get('/s/DEMO4416733/')
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, 'DEMO4416733')
+        self.assertContains(response, 'CSQU3054383')
+        self.assertContains(
+            response, '<h1 class="mono">DEMO4416733</h1>'
+        )
+        self.assertContains(
+            response, 'This shipment has 2 containers.'
+        )
+        self.assertEqual(html.count('<details class="row"'), 2)
+        positions = [
+            match.start()
+            for match in re.finditer(r'<details class="row"', html)
+        ]
+        self.assertEqual(len(positions), 2)
+        self.assertTrue(
+            html.startswith(
+                '<details class="row" open>', positions[0]
+            )
+        )
+        self.assertFalse(
+            html.startswith(
+                '<details class="row" open>', positions[1]
+            )
+        )
+        first_panel = html[positions[0]:positions[1]]
+        self.assertIn('DEMO4416733', first_panel)
+        second_panel = html[positions[1]:]
+        self.assertIn('CSQU3054383', second_panel)
+        self.assertNotIn('DEMO4416733', second_panel)
+
+    def test_container_search_hides_bl_everywhere(self):
+        for url in ('/s/CSQU3054383/', '/s/DEMO4416733/'):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            html = response.content.decode()
+            self.assertNotContains(response, 'DEMOBL001')
+            self.assertNotIn('data-bl', html.lower())
+            self.assertNotIn('<!--', html)
+
+    def test_container_search_single_container_unchanged(self):
+        company = AgentCompany.objects.create(name='Lone Co')
+        importer = Importer.objects.create(
+            agent_company=company,
+            name='Lone Importer',
+            access_code='777777',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='LONEBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Port Harcourt',
+        )
+        Container.objects.create(
+            shipment=shipment, number='LONE0000001', size='20ft'
+        )
+        self.client.post(
+            '/track/verify/', {'q': 'LONE0000001', 'code': '777777'}
+        )
+        response = self.client.get('/s/LONE0000001/')
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
         self.assertEqual(html.count('<details class="row"'), 1)
         self.assertIn('<details class="row" open>', html)
+        self.assertNotContains(response, 'This shipment has')
+        self.assertNotContains(response, 'LONEBL001')
+
+    def test_container_search_deleted_shipment_redirects(self):
+        shipment = Shipment.objects.get(bl_number='DEMOBL001')
+        shipment.deleted_at = timezone.now()
+        shipment.save(update_fields=['deleted_at'])
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/')
+
+    def test_container_search_never_shows_other_shipments(self):
+        company = AgentCompany.objects.create(name='Other Co')
+        importer = Importer.objects.create(
+            agent_company=company,
+            name='Other Importer',
+            access_code='888888',
+        )
+        shipment = Shipment.objects.create(
+            importer=importer,
+            bl_number='OTHERBL001',
+            shipping_line='Line',
+            port='Onne',
+            destination_area='Lekki',
+        )
+        Container.objects.create(
+            shipment=shipment, number='OTHER000001', size='40ft'
+        )
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'OTHERBL001')
+        self.assertNotContains(response, 'OTHER000001')
+        self.assertNotContains(response, 'Lekki')
 
     def test_bl_two_containers_both_closed(self):
         response = self.client.get('/s/DEMOBL001/')

@@ -267,9 +267,11 @@ class ImporterExplanationPageTests(TestCase):
     def test_current_step_open_others_closed(self):
         response = self.client.get('/s/CSQU3054383/')
         html = response.content.decode()
-        self.assertEqual(html.count('<details class="step" open>'), 1)
-        total = html.count('<details class="step"')
-        self.assertGreater(total - 1, 1)
+        boxes = html.split('<details class="row"')
+        self.assertEqual(len(boxes), 3)
+        for box in boxes[1:]:
+            self.assertEqual(box.count('<details class="step" open>'), 1)
+            self.assertGreater(box.count('<details class="step"') - 1, 0)
         open_at = html.index('<details class="step" open>')
         summary_end = html.index('</summary>', open_at)
         self.assertIn(

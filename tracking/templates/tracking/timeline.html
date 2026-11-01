@@ -51,27 +51,32 @@
 <p class="head-label">Container number</p>
 <h1 class="mono">{{ container.number }}</h1>
 <p class="route">{{ shipment.port }} &rarr; {{ shipment.destination_area }}</p>
-<details class="row" open>
+{% if container_count > 1 %}
+<p class="ship-count">This shipment has {{ container_count }} containers.</p>
+{% endif %}
+{% for panel in panels %}
+<details class="row"{% if panel.open %} open{% endif %}>
 <summary>
 <span class="cell">
-<span class="mono row-number">{{ container.number }}</span>
-<span class="sub">{{ container.size }}</span>
+<span class="mono row-number">{{ panel.container.number }}</span>
+<span class="sub">{{ panel.container.size }}</span>
 </span>
 <span class="cell">
-<span class="row-place">{{ shipment.port }}</span>
-<span class="sub">{% if arrived_on %}Arrived {{ arrived_on|date:"j M Y" }}{% elif shipment.discharge_date %}Discharged {{ shipment.discharge_date|date:"j M Y" }}{% else %}Awaiting arrival{% endif %}</span>
+<span class="row-place">{{ panel.shipment.port }}</span>
+<span class="sub">{% if panel.arrived_on %}Arrived {{ panel.arrived_on|date:"j M Y" }}{% elif panel.shipment.discharge_date %}Discharged {{ panel.shipment.discharge_date|date:"j M Y" }}{% else %}Awaiting arrival{% endif %}</span>
 </span>
 <span class="cell">
-<span class="row-place">{{ shipment.destination_area }}</span>
+<span class="row-place">{{ panel.shipment.destination_area }}</span>
 <span class="mini-label">Current state</span>
-<span class="cur">{% if current_label %}<svg class="dot dot-ok" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="currentColor"/></svg>{{ current_label }}{% else %}<span class="not-started">Not started</span>{% endif %}</span>
+<span class="cur">{% if panel.current_label %}<svg class="dot dot-ok" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="currentColor"/></svg>{{ panel.current_label }}{% else %}<span class="not-started">Not started</span>{% endif %}</span>
 </span>
 <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
 </summary>
 <div class="panel">
-{% include "tracking/_panel.html" with steps=steps clocks=clocks age_display=age_display hold=hold %}
+{% include "tracking/_panel.html" with steps=panel.steps clocks=panel.clocks age_display=panel.age_display hold=panel.hold %}
 </div>
 </details>
+{% endfor %}
 {% endif %}
 </main>
 <script>

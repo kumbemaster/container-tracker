@@ -175,6 +175,31 @@ class AgentTests(TestCase):
             response['Location'].startswith('/agent/login/')
         )
 
+    def test_error_banners_use_flex_markup(self):
+        company = self._company('Banner Co')
+        self._agent(company, 'banner-agent')
+        response = self.client.post(
+            '/agent/login/', {'username': 'banner-agent', 'password': 'wrong'}
+        )
+        html = response.content.decode()
+        self.assertContains(response, 'class="banner error"')
+        self.assertContains(response, 'class="banner-text"')
+        self.assertLess(html.index('banner-text'), html.index('data-dismiss'))
+
+    def test_message_loop_uses_banner_markup(self):
+        company = self._company('Loop Co')
+        self.client.force_login(self._agent(company, 'looper'))
+        importer = self._importer(company, name='Loop Foods')
+        response = self.client.post(
+            '/agent/importers/%d/rename/' % importer.pk,
+            {'name': ''},
+            follow=True,
+        )
+        html = response.content.decode()
+        self.assertContains(response, 'class="banner error"')
+        self.assertContains(response, 'Enter an importer name.')
+        self.assertLess(html.index('banner-text'), html.index('data-dismiss'))
+
     def test_failed_login_shows_generic_message(self):
         company = self._company('Login Co')
         self._agent(company, 'login-agent')

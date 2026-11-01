@@ -18,7 +18,7 @@
 {% if show_dialog %}
 <section class="dialog">
 <h2>Enter access code</h2>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>{% endif %}
 <form method="post" action="{% url 'verify' %}">
 {% csrf_token %}
 <input type="hidden" name="q" value="{{ query }}">

@@ -247,10 +247,27 @@ def timeline(request, ref):
         return _private(redirect('/'))
     explanations = _explanation_map()
     if isinstance(target, Container):
-        context = _panel_context(target, explanations)
-        context['is_bl_page'] = False
-        context['css_version'] = _css_version()
-        return _private(render(request, 'tracking/timeline.html', context))
+        siblings = list(target.shipment.containers.order_by('number'))
+        siblings.sort(key=lambda item: (item.pk != target.pk, item.number))
+        panels = [
+            _panel_context(container, explanations)
+            for container in siblings
+        ]
+        panels[0]['open'] = True
+        return _private(
+            render(
+                request,
+                'tracking/timeline.html',
+                {
+                    'is_bl_page': False,
+                    'container': target,
+                    'shipment': target.shipment,
+                    'container_count': len(panels),
+                    'panels': panels,
+                    'css_version': _css_version(),
+                },
+            )
+        )
     containers = list(target.containers.order_by('number'))
     panels = [
         _panel_context(container, explanations) for container in containers

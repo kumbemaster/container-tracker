@@ -12,18 +12,22 @@
 <div class="imp-messages">
 {% if messages %}
 {% for production_message in messages %}
-<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+<p class="banner {% if production_message.tags %}{{ production_message.tags }}{% endif %}" role="status"><span class="banner-text">{{ production_message }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endfor %}
 {% endif %}
 {% if new_importer %}
-<p id="ready-msg" class="success">Importer {{ new_importer.name }} created with code <span class="mono" id="ready-code">{{ new_importer.access_code }}</span>.
-<span id="ready-full" hidden>Your tracking code for {{ site }} is {{ new_importer.access_code }}.</span></p>
-<p><button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button></p>
+<div id="ready-msg" class="banner success" role="status">
+<span class="banner-text">Importer {{ new_importer.name }} created with code <span class="mono" id="ready-code">{{ new_importer.access_code }}</span>.
+<span id="ready-full" hidden>Your tracking code for {{ site }} is {{ new_importer.access_code }}.</span></span>
+<button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button>
+<button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button>
+</div>
 {% endif %}
 {% if rotated_importer %}
-<div id="rotated-msg" class="msg-panel success" role="status">
-<p>New code for {{ rotated_importer.name }}: <strong class="mono" id="rotated-code">{{ rotated_importer.access_code }}</strong>. The old code no longer works.</p>
+<div id="rotated-msg" class="banner success" role="status">
+<span class="banner-text">New code for {{ rotated_importer.name }}: <strong class="mono" id="rotated-code">{{ rotated_importer.access_code }}</strong>. The old code no longer works.</span>
 <button type="button" id="rotated-copy-btn" class="btn btn-secondary btn-sm">Copy</button>
+<button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button>
 </div>
 {% endif %}
 </div>

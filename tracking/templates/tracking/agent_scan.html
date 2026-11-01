@@ -8,10 +8,10 @@
 <h1>Scan a BL</h1>
 <p class="help">Scans are read by an AI model. Check every field before saving.</p>
 {% if error %}
-<p class="error">{{ error }}</p>
+<p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
 {% if scan_failed %}
-<p class="error">We could not read this document. You can enter the shipment manually.</p>
+<p class="banner error" role="status"><span class="banner-text">We could not read this document. You can enter the shipment manually.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 <p><a href="{% url 'agent_shipment_new' %}">Enter the shipment manually</a></p>
 {% endif %}
 <form method="post" action="{% url 'agent_shipment_scan' %}" enctype="multipart/form-data">

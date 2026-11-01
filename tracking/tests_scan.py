@@ -759,6 +759,23 @@ class ScanFlowTests(TestCase):
         )
         self.assertContains(response, 'value="Brand New Foods"')
 
+    def test_prefill_banner_uses_flex_markup(self):
+        company = self._company('Flex Co')
+        self.client.force_login(self._agent(company, 'flexer'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        session['bl_scan_%d' % document.pk] = self._result()
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        html = response.content.decode()
+        self.assertContains(response, 'class="scan-banner banner"')
+        self.assertContains(response, 'class="banner-text"')
+        self.assertLess(html.index('banner-text'), html.index('data-dismiss'))
+
     def test_prefill_banner_markup(self):
         company = self._company('Banner Co')
         self.client.force_login(self._agent(company, 'banner'))

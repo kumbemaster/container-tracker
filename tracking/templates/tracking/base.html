@@ -16,5 +16,17 @@
 <nav class="sitenav">{% block nav %}{% endblock %}</nav>
 </header>
 {% block content %}{% endblock %}
+<script>
+// Manual dismiss for every message banner. Automatic dismissal lives
+// only on [data-transient] banners and never on access-code messages.
+(function () {
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest('[data-dismiss]');
+    if (!button) return;
+    var banner = button.closest('.banner');
+    if (banner) banner.remove();
+  });
+})();
+</script>
 </body>
 </html>

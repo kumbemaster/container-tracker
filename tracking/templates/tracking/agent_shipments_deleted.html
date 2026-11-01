@@ -8,7 +8,7 @@
 <h1>Deleted shipments</h1>
 {% if messages %}
 {% for production_message in messages %}
-<p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
+<p class="banner {% if production_message.tags %}{{ production_message.tags }}{% endif %}" role="status"><span class="banner-text">{{ production_message }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endfor %}
 {% endif %}
 {% if shipments %}
