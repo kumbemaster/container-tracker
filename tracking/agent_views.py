@@ -1111,6 +1111,9 @@ def shipment_scan(request):
                 {'error': error, 'css_version': _css_version()},
             )
         data = upload.read()
+        Path(settings.MEDIA_ROOT, 'private').mkdir(
+            parents=True, exist_ok=True
+        )
         document = Document.objects.create(
             company=company,
             uploaded_by=request.user,
