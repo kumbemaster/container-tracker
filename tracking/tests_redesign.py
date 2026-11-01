@@ -42,6 +42,12 @@ class AgentRedesignTests(TestCase):
         )
         self.shipment = shipment
 
+    def test_stylesheet_link_has_version(self):
+        response = self.client.get('/agent/shipments/')
+        self.assertRegex(
+            response.content.decode(), r'style\.css\?v=\d+'
+        )
+
     def test_viewport_meta_present(self):
         response = self.client.get('/agent/shipments/')
         self.assertContains(

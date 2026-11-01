@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.conf import settings
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_POST
@@ -17,6 +19,20 @@ WRONG_DETAILS_MESSAGE = (
     'Check the number and the code your clearing agent gave you.'
 )
 LOCKED_MESSAGE = 'Too many attempts. Please try again in 15 minutes.'
+
+
+def _css_version():
+    """Stylesheet modification time for cache-busting the CSS link."""
+    css = (
+        Path(__file__).resolve().parent
+        / 'static'
+        / 'tracking'
+        / 'style.css'
+    )
+    try:
+        return int(css.stat().st_mtime)
+    except OSError:
+        return 0
 
 
 def _private(response):
@@ -56,7 +72,13 @@ def _is_deleted(target):
 @require_GET
 def search(request):
     response = render(
-        request, 'tracking/search.html', {'query': '', 'show_dialog': False}
+        request,
+        'tracking/search.html',
+        {
+            'query': '',
+            'show_dialog': False,
+            'css_version': _css_version(),
+        },
     )
     return _private(response)
 
@@ -74,7 +96,12 @@ def track(request):
     response = render(
         request,
         'tracking/search.html',
-        {'query': raw_query, 'show_dialog': True, 'error': ''},
+        {
+            'query': raw_query,
+            'show_dialog': True,
+            'error': '',
+            'css_version': _css_version(),
+        },
     )
     return _private(response)
 
@@ -90,7 +117,12 @@ def verify(request):
         response = render(
             request,
             'tracking/search.html',
-            {'query': raw_query, 'show_dialog': True, 'error': LOCKED_MESSAGE},
+            {
+                'query': raw_query,
+                'show_dialog': True,
+                'error': LOCKED_MESSAGE,
+                'css_version': _css_version(),
+            },
         )
         return _private(response)
     target = access_helpers.find_target(raw_query)
@@ -123,6 +155,7 @@ def verify(request):
             'query': raw_query,
             'show_dialog': True,
             'error': WRONG_DETAILS_MESSAGE,
+            'css_version': _css_version(),
         },
     )
     return _private(response)
@@ -216,6 +249,7 @@ def timeline(request, ref):
     if isinstance(target, Container):
         context = _panel_context(target, explanations)
         context['is_bl_page'] = False
+        context['css_version'] = _css_version()
         return _private(render(request, 'tracking/timeline.html', context))
     containers = list(target.containers.order_by('number'))
     panels = [
@@ -232,6 +266,7 @@ def timeline(request, ref):
                 'shipment': target,
                 'container_count': len(panels),
                 'panels': panels,
+                'css_version': _css_version(),
             },
         )
     )

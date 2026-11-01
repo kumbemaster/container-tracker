@@ -106,6 +106,18 @@
     });
   }
 })();
+// Drop the focus ring after a mouse click on a step summary. Keyboard
+// toggles report event.detail 0, so keyboard focus keeps its outline.
+(function () {
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.stp'),
+    function (summary) {
+      summary.addEventListener('click', function (event) {
+        if (event.detail > 0) summary.blur();
+      });
+    }
+  );
+})();
 // Listen uses the browser Web Speech API only: a built-in browser
 // feature for reading text aloud, not a model call, and it makes no
 // network request.

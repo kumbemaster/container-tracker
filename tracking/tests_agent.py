@@ -440,6 +440,198 @@ class AgentTests(TestCase):
         )
         self.assertNotContains(response, 'Foreign Foods')
 
+    def test_importer_page_forms(self):
+        company = self._company('Forms Co')
+        self.client.force_login(self._agent(company, 'former'))
+        alpha = self._importer(company, name='Alpha Foods')
+        beta = self._importer(company, name='Beta Foods')
+
+        class FormParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack = []
+                self.forms = []
+                self.max_depth = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag != 'form':
+                    if tag == 'input' and self.stack:
+                        name = dict(attrs).get('name')
+                        if name and name != 'csrfmiddlewaretoken':
+                            form = self.stack[-1]
+                            form['fields'][name] = dict(attrs).get(
+                                'value', ''
+                            )
+                    return
+                form = {
+                    'action': dict(attrs).get('action'),
+                    'fields': {},
+                }
+                self.stack.append(form)
+                self.forms.append(form)
+                self.max_depth = max(self.max_depth, len(self.stack))
+
+            def handle_endtag(self, tag):
+                if tag == 'form' and self.stack:
+                    self.stack.pop()
+
+        html = self.client.get('/agent/importers/').content.decode()
+        parser = FormParser()
+        parser.feed(html)
+        self.assertEqual(parser.stack, [])
+        self.assertLessEqual(parser.max_depth, 1)
+        actions = [form['action'] for form in parser.forms]
+        self.assertIn('/agent/importers/add/', actions)
+        rotate = [
+            form for form in parser.forms
+            if (form['action'] or '').endswith('/rotate/')
+        ]
+        rename = [
+            form for form in parser.forms
+            if (form['action'] or '').endswith('/rename/')
+        ]
+        self.assertEqual(len(rotate), 2)
+        self.assertEqual(len(rename), 2)
+        for form in rotate:
+            self.assertEqual(form['fields'], {})
+        for form in rename:
+            self.assertIn('name', form['fields'])
+
+        rotate_action = next(
+            form['action'] for form in rotate
+            if '/%d/rotate/' % alpha.pk in form['action']
+        )
+        old_code = alpha.access_code
+        session, _ = access_helpers.create_device_session()
+        access_helpers.grant_access(session, alpha)
+        response = self.client.post(rotate_action, follow=True)
+        alpha.refresh_from_db()
+        self.assertNotEqual(alpha.access_code, old_code)
+        self.assertRegex(alpha.access_code, r'^\d{6}$')
+        self.assertEqual(alpha.name, 'Alpha Foods')
+        grant = session.devicegrant_set.get(importer=alpha)
+        self.assertTrue(grant.revoked)
+        self.assertContains(response, 'Alpha Foods')
+        self.assertContains(response, alpha.access_code)
+        self.assertContains(response, 'The old code no longer works.')
+        self.assertContains(response, 'rotated-copy-btn')
+
+        rename_action = next(
+            form['action'] for form in rename
+            if '/%d/rename/' % beta.pk in form['action']
+        )
+        rename_fields = next(
+            form['fields'] for form in rename
+            if '/%d/rename/' % beta.pk in form['action']
+        )
+        self.assertEqual(rename_fields['name'], 'Beta Foods')
+        beta_code = beta.access_code
+        response = self.client.post(
+            rename_action, {'name': 'Beta Prime'}, follow=True
+        )
+        beta.refresh_from_db()
+        self.assertEqual(beta.name, 'Beta Prime')
+        self.assertEqual(beta.access_code, beta_code)
+        self.assertContains(response, 'Renamed importer to Beta Prime.')
+
+        add_action = next(
+            form['action'] for form in parser.forms
+            if form['action'] == '/agent/importers/add/'
+        )
+        response = self.client.post(
+            add_action, {'name': 'Gamma Foods'}, follow=True
+        )
+        gamma = Importer.objects.get(
+            agent_company=company, name='Gamma Foods'
+        )
+        self.assertRegex(gamma.access_code, r'^\d{6}$')
+        self.assertContains(response, 'created with code')
+
+    def test_importer_search(self):
+        company = self._company('Search Co')
+        self.client.force_login(self._agent(company, 'searcher'))
+        self._importer(company, name='Alpha Foods')
+        self._importer(company, name='Beta Goods')
+        response = self.client.get('/agent/importers/')
+        self.assertContains(response, 'Search importers')
+        self.assertContains(response, 'Type part of a name')
+        self.assertContains(response, 'id-imp-search')
+        self.assertContains(response, 'imp-empty')
+        self.assertContains(response, '2 importers')
+        response = self.client.get('/agent/importers/', {'q': 'alpha'})
+        self.assertContains(response, 'Alpha Foods')
+        self.assertNotContains(response, 'Beta Goods')
+        self.assertContains(response, 'value="alpha"')
+        self.assertContains(response, '1 of 2 importers')
+        response = self.client.get('/agent/importers/', {'q': 'zzz'})
+        self.assertContains(response, 'No importers match "zzz"')
+        self.assertContains(response, 'Clear search')
+
+    def test_importer_status_shown_only_when_relevant(self):
+        company = self._company('Status Co')
+        self.client.force_login(self._agent(company, 'status-user'))
+        plain = self._importer(company, name='Plain Foods')
+        response = self.client.get('/agent/importers/')
+        self.assertNotContains(response, 'Active:')
+        plain.access_active = False
+        plain.save(update_fields=['access_active'])
+        response = self.client.get('/agent/importers/')
+        self.assertContains(response, 'Active: no')
+        self.assertNotContains(response, 'Expires:')
+
+    def test_importer_messages_render_exactly_once(self):
+        company = self._company('Once Co')
+        self.client.force_login(self._agent(company, 'oncer'))
+        solo = self._importer(company, name='Solo Foods')
+        response = self.client.post(
+            '/agent/importers/%d/rotate/' % solo.pk, follow=True
+        )
+        html = response.content.decode()
+        self.assertEqual(
+            html.count('The old code no longer works.'), 1
+        )
+        msg_start = html.index('id="rotated-msg"')
+        msg_end = html.index('</div>', msg_start)
+        self.assertIn('id="rotated-copy-btn"', html[msg_start:msg_end])
+        response = self.client.post(
+            '/agent/importers/%d/rename/' % solo.pk,
+            {'name': 'Solo Prime'},
+            follow=True,
+        )
+        html = response.content.decode()
+        self.assertEqual(html.count('Renamed importer to Solo Prime.'), 1)
+        response = self.client.post(
+            '/agent/importers/add/', {'name': 'New Foods'}, follow=True
+        )
+        html = response.content.decode()
+        self.assertEqual(html.count('created with code'), 1)
+
+    def test_importer_search_markup_and_page_order(self):
+        company = self._company('Order Co')
+        self.client.force_login(self._agent(company, 'orderer'))
+        self._importer(company, name='Alpha Foods')
+        html = self.client.get('/agent/importers/').content.decode()
+        self.assertContains(
+            self.client.get('/agent/importers/'), 'imp-total'
+        )
+        for token in (
+            '<label for="id-imp-search">Search importers</label>',
+            'imp-search-box',
+            'imp-search-icon',
+            'id="imp-search-clear"',
+            'id="imp-count"',
+        ):
+            self.assertIn(token, html)
+        self.assertLess(
+            html.index('<input id="id-imp-search"'),
+            html.index('id="imp-count"'),
+        )
+        self.assertLess(html.index('imp-total'), html.index('Add importer'))
+        self.assertLess(
+            html.index('Add importer'), html.index('id-imp-search')
+        )
+        self.assertLess(html.index('id-imp-search'), html.index('imp-grid'))
+
     def test_importer_add_requires_login(self):
         response = self.client.post(
             '/agent/importers/add/', {'name': 'Nope'}

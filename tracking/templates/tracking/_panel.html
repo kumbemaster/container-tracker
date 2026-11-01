@@ -10,15 +10,7 @@
 <div class="tl-text">
 {% if step.explanation_en %}
 <details class="step"{% if step.state == 'current' %} open{% endif %}>
-<summary class="step-summary" aria-label="{{ step.label }}{% if step.state == 'current' %}, current step{% endif %}{% if step.state == 'upcoming' %}, not yet reached{% endif %}: What does this mean?">
-<span class="step-line"><strong>{{ step.label }}</strong><span class="i-circle" aria-hidden="true">i</span></span>
-{% if step.state == 'completed' or step.state == 'current' %}
-<span class="step-date"><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time></span>
-<span class="st-word st-{{ step.state }}">Completed</span>
-{% elif step.state == 'processing' %}
-<span class="st-word st-processing">In progress</span>
-{% endif %}
-</summary>
+<summary class="stp" aria-label="{{ step.label }}{% if step.state == 'current' %}, current step{% endif %}{% if step.state == 'upcoming' %}, not yet reached{% endif %}: What does this mean?"><span class="stp-title"><span class="stp-label">{{ step.label }}</span><span class="stp-i" aria-hidden="true">i</span></span>{% if step.state == 'completed' or step.state == 'current' %}<span class="stp-date"><time>{{ step.occurred_at|date:"j M Y, H:i" }}</time></span><span class="stp-status">Completed</span>{% elif step.state == 'processing' %}<span class="stp-status">In progress</span>{% endif %}</summary>
 <div class="step-info-body">
 <p class="lang-en">{{ step.explanation_en }}</p>
 <p lang="pcm" class="lang-pcm">{{ step.explanation_pcm|default:step.explanation_en }}</p>

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -252,7 +253,7 @@ class ImporterExplanationPageTests(TestCase):
         self.assertContains(response, 'localStorage')
         self.assertContains(response, 'listen-btn')
         self.assertContains(response, 'speechSynthesis')
-        self.assertContains(response, 'i-circle')
+        self.assertContains(response, 'stp-i')
         self.assertContains(response, 'What does this mean?')
         self.assertNotContains(response, 'info-btn')
 
@@ -261,9 +262,7 @@ class ImporterExplanationPageTests(TestCase):
         html = response.content.decode()
         total = html.count('<details class="step"')
         self.assertGreater(total, 1)
-        self.assertEqual(
-            html.count('<summary class="step-summary"'), total
-        )
+        self.assertEqual(html.count('<summary class="stp"'), total)
 
     def test_current_step_open_others_closed(self):
         response = self.client.get('/s/CSQU3054383/')
@@ -286,20 +285,77 @@ class ImporterExplanationPageTests(TestCase):
             r'<div class="step-info-body">.*?listen-btn.*?</details>',
         )
         self.assertContains(
-            response, 'class="i-circle" aria-hidden="true"'
+            response, 'class="stp-i" aria-hidden="true"'
         )
 
-    def test_step_summary_has_three_block_lines(self):
-        response = self.client.get('/s/CSQU3054383/')
-        self.assertContains(response, 'step-line')
-        self.assertContains(response, 'step-date')
-        self.assertContains(response, 'st-word')
+    def test_stylesheet_link_has_version(self):
+        for url in ('/', '/s/CSQU3054383/'):
+            response = self.client.get(url)
+            self.assertRegex(
+                response.content.decode(), r'style\.css\?v=\d+'
+            )
+
+    def test_top_bar_wrap_rules(self):
         css = (
             Path(__file__).parent / 'static' / 'tracking' / 'style.css'
         ).read_text()
-        self.assertIn('.step-summary {\n  display: block;', css)
-        self.assertIn('.step-line {\n  display: block;', css)
-        self.assertIn('.step-date {\n  display: block;', css)
+        self.assertIn('.sitebar > *', css)
+        self.assertIn('min-width: 0', css)
+        self.assertIn('flex: 1 1 220px', css)
+        self.assertIn('max-width: 420px', css)
+        self.assertIn('.lang-switch', css)
+        self.assertIn('flex: none', css)
+
+    def test_step_summary_focus_handling(self):
+        response = self.client.get('/s/CSQU3054383/')
+        self.assertContains(response, "querySelectorAll('.stp')")
+        self.assertContains(response, 'summary.blur()')
+        css = (
+            Path(__file__).parent / 'static' / 'tracking' / 'style.css'
+        ).read_text()
+        self.assertIn('summary:focus:not(:focus-visible)', css)
+
+    def test_step_summaries_stack_three_spans(self):
+        response = self.client.get('/s/CSQU3054383/')
+        html = response.content.decode()
+        summaries = re.findall(
+            r'<summary class="stp"[^>]*>(.*?)</summary>', html, re.S
+        )
+        self.assertGreater(len(summaries), 1)
+        found_full = False
+        for body in summaries:
+            self.assertIn('<span class="stp-title">', body)
+            title_at = body.index('stp-title')
+            if 'stp-date' in body:
+                date_at = body.index('stp-date')
+                self.assertLess(title_at, date_at)
+            if 'stp-status' in body:
+                status_at = body.index('stp-status')
+                self.assertLess(title_at, status_at)
+                if 'stp-date' in body:
+                    self.assertLess(date_at, status_at)
+                    found_full = True
+        self.assertTrue(found_full)
+
+    def test_final_stp_block_wins(self):
+        css = (
+            Path(__file__).parent / 'static' / 'tracking' / 'style.css'
+        ).read_text()
+        marker = '/* Step summary: stacked lines'
+        self.assertIn(marker, css)
+        head, tail = css.split(marker, 1)
+        flat = re.sub(r'\s+', '', tail)
+        self.assertIn('.stp{display:block!important;', flat)
+        for match in re.finditer(r'([^{}]+)\{([^{}]*)\}', head):
+            selector = match.group(1)
+            if re.search(
+                r'\.stp(-title|-date|-status|-label|-i)?(?![\w-])',
+                selector,
+            ):
+                self.assertNotRegex(
+                    match.group(2),
+                    r'display\s*:\s*(flex|inline-flex|grid)',
+                )
 
     def test_pidgin_falls_back_to_english(self):
         StageExplanation.objects.filter(

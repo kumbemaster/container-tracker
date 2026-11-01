@@ -3,50 +3,83 @@
 {% block title %}Importers{% endblock %}
 
 {% block content %}
-<main class="wrap agent-wrap">
+<main class="wrap agent-wrap imp-page">
 <div class="card">
 <h1>Importers</h1>
+<p class="imp-total">{{ total }} importer{{ total|pluralize }}</p>
+</div>
+{% if messages or new_importer or rotated_importer %}
+<div class="imp-messages">
 {% if messages %}
 {% for production_message in messages %}
 <p class="{% if production_message.tags %}{{ production_message.tags }}{% endif %}">{{ production_message }}</p>
 {% endfor %}
 {% endif %}
-{% if new_code %}
-<p id="ready-msg" class="success">Importer {{ new_importer_name }} created with code <span class="mono" id="ready-code">{{ new_code }}</span>.
-<span id="ready-full" hidden>Your tracking code for {{ site_address }} is {{ new_code }}.</span></p>
+{% if new_importer %}
+<p id="ready-msg" class="success">Importer {{ new_importer.name }} created with code <span class="mono" id="ready-code">{{ new_importer.access_code }}</span>.
+<span id="ready-full" hidden>Your tracking code for {{ site }} is {{ new_importer.access_code }}.</span></p>
 <p><button type="button" id="ready-copy-btn" class="btn btn-secondary btn-sm">Copy</button></p>
 {% endif %}
+{% if rotated_importer %}
+<div id="rotated-msg" class="msg-panel success" role="status">
+<p>New code for {{ rotated_importer.name }}: <strong class="mono" id="rotated-code">{{ rotated_importer.access_code }}</strong>. The old code no longer works.</p>
+<button type="button" id="rotated-copy-btn" class="btn btn-secondary btn-sm">Copy</button>
 </div>
+{% endif %}
+</div>
+{% endif %}
 <div class="card">
 <h2>Add importer</h2>
-{% if add_error %}
-<p class="error">{{ add_error }}</p>
-{% endif %}
 <form method="post" action="{% url 'agent_importer_add' %}">
 {% csrf_token %}
 <label for="id-importer-name">Importer name</label>
 <div class="imp-add-row">
-<input id="id-importer-name" type="text" name="name" maxlength="200" value="{{ add_name }}" required>
+<input id="id-importer-name" type="text" name="name" maxlength="200" required>
 <button type="submit" class="btn">Add importer</button>
 </div>
 </form>
 </div>
-<div class="imp-grid">
+<div class="imp-search-section">
+<form class="imp-search" method="get" action="{% url 'agent_importers' %}">
+<label for="id-imp-search">Search importers</label>
+<div class="imp-search-box">
+<svg class="imp-search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13.5 13.5L17 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+<input id="id-imp-search" type="search" name="q" value="{{ query }}" placeholder="Type part of a name" autocomplete="off">
+<button type="button" id="imp-search-clear" class="imp-search-x" aria-label="Clear search" hidden>×</button>
+</div>
+</form>
+<p class="imp-count" id="imp-count" aria-live="polite">{% if shown == total %}{{ total }} importer{{ total|pluralize }}{% else %}{{ shown }} of {{ total }} importers{% endif %}</p>
+{% if query and not importers %}
+<p>No importers match "{{ query }}". <a href="{% url 'agent_importers' %}">Clear search</a></p>
+{% endif %}
+<div id="imp-empty" hidden>
+<p>No importers match "<span id="imp-empty-q"></span>"</p>
+<p><button type="button" class="btn btn-secondary btn-sm" id="imp-empty-clear">Clear search</button></p>
+</div>
+</div>
+<div class="imp-grid" data-total="{{ total }}">
 {% for importer in importers %}
 <div class="card imp-card">
 <h2 class="imp-name">{{ importer.name }}</h2>
 <p class="mini-label">Access code</p>
 <p><span class="mono imp-code">{{ importer.access_code }}</span></p>
 <p><button type="button" id="ready-copy-btn-{{ importer.pk }}" class="btn btn-secondary btn-sm">Copy</button></p>
-<p id="ready-msg-{{ importer.pk }}" class="imp-status" hidden>Your tracking code for {{ site_address }} is {{ importer.access_code }}.</p>
-<p class="imp-status">Active: {% if importer.access_active %}yes{% else %}no{% endif %} · Expires: {% if importer.access_expires_at %}{{ importer.access_expires_at|date:"j M Y" }}{% else %}—{% endif %}</p>
+<p id="ready-msg-{{ importer.pk }}" class="imp-status" hidden>Your tracking code for {{ site }} is {{ importer.access_code }}.</p>
+{% if not importer.access_active or importer.access_expires_at %}
+<p class="imp-status">Active: {% if importer.access_active %}yes{% else %}no{% endif %}{% if importer.access_expires_at %} · Expires: {{ importer.access_expires_at|date:"j M Y" }}{% endif %}</p>
+{% endif %}
 <p class="imp-status">{{ importer.shipment_count }} shipment{{ importer.shipment_count|pluralize }}</p>
 <div class="imp-actions">
 <a class="btn btn-sm" href="{% url 'agent_shipment_new' %}?importer={{ importer.pk }}">New shipment</a>
+<details class="rotate">
+<summary class="btn btn-secondary btn-sm">Rotate code</summary>
+<p>Rotate the code? Devices using the old code will need the new one.</p>
 <form method="post" action="{% url 'agent_importer_rotate' pk=importer.pk %}">
 {% csrf_token %}
-<button type="submit" class="btn btn-secondary btn-sm">Rotate code</button>
+<button type="submit" class="btn btn-danger btn-sm">Rotate now</button>
 </form>
+<p><button type="button" class="btn btn-quiet rotate-cancel">Cancel</button></p>
+</details>
 </div>
 <details class="rename">
 <summary class="btn btn-quiet">Edit name</summary>
@@ -57,13 +90,7 @@
 <input id="id-rename-{{ importer.pk }}" type="text" name="name" maxlength="200" value="{{ importer.name }}" required>
 <button type="submit" class="btn btn-secondary btn-sm">Save</button>
 </div>
-{% if rename_errors %}
-{% for error_pk, error_text in rename_errors.items %}
-{% if error_pk == importer.pk %}
-<p class="error">{{ error_text }}</p>
-{% endif %}
-{% endfor %}
-{% endif %}
+</form>
 </details>
 </div>
 {% endfor %}
@@ -92,6 +119,76 @@
       if (msg) copyText(msg.textContent);
     });
   });
+  var searchField = document.getElementById('id-imp-search');
+  var searchClear = document.getElementById('imp-search-clear');
+  var searchCount = document.getElementById('imp-count');
+  var searchEmpty = document.getElementById('imp-empty');
+  var searchEmptyQ = document.getElementById('imp-empty-q');
+  var searchEmptyClear = document.getElementById('imp-empty-clear');
+  var grid = document.querySelector('.imp-grid');
+  var cards = Array.prototype.slice.call(
+    document.querySelectorAll('.imp-card')
+  );
+  function resetSearch() {
+    if (searchField) searchField.value = '';
+    applySearch();
+    if (searchField) searchField.focus();
+  }
+  function applySearch() {
+    if (!searchField) return;
+    var q = searchField.value.trim().toLowerCase();
+    var total = grid && grid.getAttribute('data-total')
+      ? parseInt(grid.getAttribute('data-total'), 10)
+      : cards.length;
+    var shown = 0;
+    cards.forEach(function (card) {
+      var name = card.querySelector('.imp-name');
+      var hit = !q || (
+        name && name.textContent.toLowerCase().indexOf(q) !== -1
+      );
+      card.hidden = !hit;
+      if (hit) shown += 1;
+    });
+    if (searchCount) {
+      if (shown === total) {
+        searchCount.textContent = total + ' importer' +
+          (total === 1 ? '' : 's');
+      } else {
+        searchCount.textContent = shown + ' of ' + total + ' importers';
+      }
+    }
+    if (searchEmpty) {
+      searchEmpty.hidden = shown !== 0;
+      if (searchEmptyQ) searchEmptyQ.textContent = searchField.value.trim();
+    }
+    if (searchClear) searchClear.hidden = !q;
+  }
+  if (searchField) {
+    searchField.addEventListener('input', applySearch);
+    applySearch();
+  }
+  if (searchClear) {
+    searchClear.addEventListener('click', resetSearch);
+  }
+  if (searchEmptyClear) {
+    searchEmptyClear.addEventListener('click', resetSearch);
+  }
+  var rotated = document.getElementById('rotated-copy-btn');
+  if (rotated) {
+    rotated.addEventListener('click', function () {
+      var code = document.getElementById('rotated-code');
+      if (code) copyText(code.textContent);
+    });
+  }
+  Array.prototype.forEach.call(
+    document.querySelectorAll('.rotate-cancel'),
+    function (btn) {
+      btn.addEventListener('click', function () {
+        var box = btn.closest('details');
+        if (box) box.open = false;
+      });
+    }
+  );
 })();
 </script>
 </main>

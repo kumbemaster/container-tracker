@@ -6,6 +6,7 @@ import secrets
 import struct
 from datetime import timedelta
 from functools import wraps
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib import messages
@@ -112,6 +113,7 @@ class AgentLoginView(LoginView):
         context['allow_signup'] = getattr(
             settings, 'ALLOW_AGENT_SIGNUP', True
         )
+        context['css_version'] = _css_version()
         return context
 
 
@@ -218,7 +220,11 @@ def signup(request):
     return render(
         request,
         'tracking/agent_signup.html',
-        {'error': error, 'values': values},
+        {
+            'error': error,
+            'values': values,
+            'css_version': _css_version(),
+        },
     )
 
 
@@ -277,7 +283,11 @@ def shipment_list(request):
     return render(
         request,
         'tracking/agent_shipments.html',
-        {'rows': rows, 'show_closed': show_closed},
+        {
+            'rows': rows,
+            'show_closed': show_closed,
+            'css_version': _css_version(),
+        },
     )
 
 
@@ -293,6 +303,7 @@ def shipment_new(request):
         'prefill': False,
         'scan_document': None,
         'importer_check': False,
+        'css_version': _css_version(),
     }
     if request.method == 'POST':
         form = ShipmentForm(company, request.POST)
@@ -879,6 +890,7 @@ def shipment_detail(request, pk):
             'optional_keys': [stage.key for stage in optional_stages],
             'waiting_choices': Container.WaitingOn.choices,
             'history': history,
+            'css_version': _css_version(),
         },
     )
 
@@ -906,6 +918,7 @@ def shipment_delete(request, pk):
             'containers': list(
                 shipment.containers.order_by('number')
             ),
+            'css_version': _css_version(),
         },
     )
 
@@ -925,7 +938,7 @@ def deleted_list(request):
     return render(
         request,
         'tracking/agent_shipments_deleted.html',
-        {'shipments': shipments},
+        {'shipments': shipments, 'css_version': _css_version()},
     )
 
 
@@ -975,6 +988,7 @@ def shipment_restore(request, pk):
 @require_GET
 def importer_list(request):
     company = request.agent_company
+    query = (request.GET.get('q') or '').strip()
     importers = (
         Importer.objects.filter(agent_company=company)
         .annotate(
@@ -985,11 +999,20 @@ def importer_list(request):
         )
         .order_by('name')
     )
+    total = importers.count()
+    if query:
+        importers = importers.filter(name__icontains=query)
     new_importer = None
     added = request.GET.get('added') or ''
     if added.isdigit():
         new_importer = Importer.objects.filter(
             pk=int(added), agent_company=company
+        ).first()
+    rotated_importer = None
+    rotated = request.GET.get('rotated') or ''
+    if rotated.isdigit():
+        rotated_importer = Importer.objects.filter(
+            pk=int(rotated), agent_company=company
         ).first()
     return render(
         request,
@@ -997,7 +1020,12 @@ def importer_list(request):
         {
             'importers': importers,
             'new_importer': new_importer,
+            'rotated_importer': rotated_importer,
             'site': request.build_absolute_uri('/'),
+            'query': query,
+            'total': total,
+            'shown': importers.count(),
+            'css_version': _css_version(),
         },
     )
 
@@ -1035,8 +1063,11 @@ def importer_rotate(request, pk):
     importer = get_object_or_404(
         Importer, pk=pk, agent_company=request.agent_company
     )
-    access_helpers.rotate_code(importer, _random_code())
-    return redirect('agent_importers')
+    code = _random_code()
+    access_helpers.rotate_code(importer, code)
+    return redirect(
+        '%s?rotated=%d' % (reverse('agent_importers'), importer.pk)
+    )
 
 
 SCAN_MAX_BYTES = 8 * 1024 * 1024
@@ -1075,7 +1106,9 @@ def shipment_scan(request):
             error = 'You have reached the daily scan limit (50 per day).'
         if error is not None:
             return render(
-                request, 'tracking/agent_scan.html', {'error': error}
+                request,
+                'tracking/agent_scan.html',
+                {'error': error, 'css_version': _css_version()},
             )
         data = upload.read()
         document = Document.objects.create(
@@ -1092,13 +1125,19 @@ def shipment_scan(request):
         except Exception:
             logger.warning('bl scan failed document=%d', document.pk)
             return render(
-                request, 'tracking/agent_scan.html', {'scan_failed': True}
+                request,
+                'tracking/agent_scan.html',
+                {'scan_failed': True, 'css_version': _css_version()},
             )
         request.session[_scan_session_key(document.pk)] = result
         return redirect(
             '%s?scan=%d' % (reverse('agent_shipment_new'), document.pk)
         )
-    return render(request, 'tracking/agent_scan.html', {})
+    return render(
+        request,
+        'tracking/agent_scan.html',
+        {'css_version': _css_version()},
+    )
 
 
 @agent_required
@@ -1355,6 +1394,20 @@ def assistant_cancel(request):
 
 
 TRANSCRIBE_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _css_version():
+    """Stylesheet modification time for cache-busting the CSS link."""
+    css = (
+        Path(__file__).resolve().parent
+        / 'static'
+        / 'tracking'
+        / 'style.css'
+    )
+    try:
+        return int(css.stat().st_mtime)
+    except OSError:
+        return 0
 TRANSCRIBE_DAILY_LIMIT = 100
 TRANSCRIBE_FRIENDLY = 'We could not hear that. Please type it instead.'
 
