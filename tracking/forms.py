@@ -13,15 +13,11 @@ def normalise_number(raw):
 
 
 class ShipmentForm(forms.Form):
-    importer = forms.ModelChoiceField(
-        queryset=Importer.objects.none(),
-        required=False,
-        empty_label='Select an importer',
-    )
-    new_importer_name = forms.CharField(
+    importer_name = forms.CharField(
         max_length=200,
-        required=False,
-        help_text='Or type a new importer name instead of choosing above.',
+        label='Importer',
+        help_text='Type a name or pick from the list.',
+        widget=forms.TextInput(attrs={'list': 'importer-list'}),
     )
     bl_number = forms.CharField(
         max_length=100, help_text='As written on the bill of lading'
@@ -32,22 +28,22 @@ class ShipmentForm(forms.Form):
 
     def __init__(self, company, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['importer'].queryset = Importer.objects.filter(
-            agent_company=company
-        ).order_by('name')
-        self.fields['importer'].label_from_instance = lambda obj: obj.name
         self.company = company
         self.duplicate_shipment = None
+        self.resolved_importer = None
         self.rows = self._rows_from_data() if self.is_bound else [self._blank_row()]
 
     def clean(self):
         cleaned = super().clean()
-        if not cleaned.get('importer') and not (
-            cleaned.get('new_importer_name') or ''
-        ).strip():
-            raise forms.ValidationError(
-                'Choose an importer or type a new importer name.'
-            )
+        name = re.sub(
+            r'\s+', ' ', cleaned.get('importer_name') or ''
+        ).strip()
+        if not name:
+            raise forms.ValidationError('Enter an importer name.')
+        cleaned['importer_name'] = name
+        self.resolved_importer = Importer.objects.filter(
+            agent_company=self.company, name__iexact=name
+        ).first()
         bl_number = cleaned.get('bl_number') or ''
         if bl_number:
             match = self._duplicate_shipment(bl_number)
@@ -147,9 +143,3 @@ class ShipmentForm(forms.Form):
         return [
             (row['number'], row['size']) for row in self.rows
         ]
-
-    def importer_name(self):
-        importer = self.cleaned_data.get('importer')
-        if importer is not None:
-            return None
-        return (self.cleaned_data.get('new_importer_name') or '').strip()

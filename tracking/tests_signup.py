@@ -268,7 +268,7 @@ class ShipmentDeleteTests(TestCase):
         response = self.client.post(
             '/agent/shipments/new/',
             {
-                'new_importer_name': 'Second Importer',
+                'importer_name': 'Second Importer',
                 'bl_number': 'delbl001',
                 'port': 'Onne',
                 'destination_area': 'Port Harcourt',

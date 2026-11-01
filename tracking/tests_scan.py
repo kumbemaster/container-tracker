@@ -736,9 +736,8 @@ class ScanFlowTests(TestCase):
         self.assertContains(
             response, '<option value="40ft" selected>'
         )
-        self.assertContains(
-            response, '<option value="%d" selected>' % importer.pk
-        )
+        self.assertContains(response, 'value="Matched Foods"')
+        self.assertContains(response, '<option value="matched foods">')
         self.assertContains(response, 'Check this')
         self.assertContains(response, 'check-row')
         self.assertContains(response, 'name="scan_document"')
@@ -759,6 +758,24 @@ class ScanFlowTests(TestCase):
             '/agent/shipments/new/?scan=%d' % document.pk
         )
         self.assertContains(response, 'value="Brand New Foods"')
+
+    def test_prefill_banner_markup(self):
+        company = self._company('Banner Co')
+        self.client.force_login(self._agent(company, 'banner'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        session['bl_scan_%d' % document.pk] = self._result()
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        self.assertContains(response, 'role="status"')
+        self.assertContains(response, 'data-transient')
+        self.assertContains(response, 'data-dismiss')
+        self.assertContains(response, 'aria-label="Dismiss"')
+        self.assertContains(response, 'prefers-reduced-motion')
 
     def test_prefill_notify_importer_shows_note_and_check(self):
         company = self._company('Notify Co')
@@ -799,6 +816,24 @@ class ScanFlowTests(TestCase):
         self.assertContains(response, 'value="Consignee Foods"')
         self.assertNotContains(response, 'Chosen from the notify party.')
 
+    def test_prefill_missing_importer_shows_note(self):
+        company = self._company('Missing Co')
+        self.client.force_login(self._agent(company, 'misser'))
+        document = Document.objects.create(
+            company=company, kind=Document.Kind.BL
+        )
+        session = self.client.session
+        result = self._result()
+        result['importer_name'] = None
+        result['importer_source'] = None
+        result['uncertain'] = ['importer_name']
+        session['bl_scan_%d' % document.pk] = result
+        session.save()
+        response = self.client.get(
+            '/agent/shipments/new/?scan=%d' % document.pk
+        )
+        self.assertContains(response, 'Not found on the document.')
+
     def test_prefill_unrecognised_size_is_highlighted(self):
         company = self._company('Size Co')
         self.client.force_login(self._agent(company, 'sizer'))
@@ -835,8 +870,7 @@ class ScanFlowTests(TestCase):
         response = self.client.post(
             '/agent/shipments/new/',
             {
-                'importer': str(importer.pk),
-                'new_importer_name': '',
+                'importer_name': importer.name,
                 'bl_number': 'SCANBL001',
                 'shipping_line': 'Scan Line',
                 'port': 'Onne',

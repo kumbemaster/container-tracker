@@ -312,6 +312,48 @@ textarea {
   border: 1px solid var(--ok);
   border-radius: 8px;
   padding: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.scan-banner > span:first-child {
+  flex: 1;
+}
+
+.banner-x {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.banner-x:hover {
+  background: rgba(27, 127, 77, 0.12);
+}
+
+.imp-ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.imp-new {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.status-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  margin-right: 0.3em;
 }
 
 .check-note {

@@ -8,7 +8,7 @@
 <h1>New shipment</h1>
 <p><a class="btn btn-quiet" href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if prefill %}
-<p class="scan-banner">Prefilled from your scan. Nothing is saved until you submit.</p>
+<p class="scan-banner" role="status" data-transient><span>Prefilled from your scan. Nothing is saved until you submit.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
 {% if form.non_field_errors %}
 <p class="error">{{ form.non_field_errors }}</p>
@@ -18,8 +18,10 @@
 {% if scan_document %}
 <input type="hidden" name="scan_document" value="{{ scan_document }}">
 {% endif %}
-<p>{{ form.importer.label_tag }} {{ form.importer }} {{ form.importer.errors }}</p>
-<p>{{ form.new_importer_name.label_tag }} {{ form.new_importer_name }} {{ form.new_importer_name.errors }}{% if importer_check %} <span class="check-note">Check this</span>{% endif %}{% if importer_source == 'notify' %}<br><span class="help">Chosen from the notify party.</span>{% endif %}<br><span class="help">{{ form.new_importer_name.help_text }}</span></p>
+<p>{{ form.importer_name.label_tag }} {{ form.importer_name }} {{ form.importer_name.errors }}{% if importer_check %} <span class="check-note">Check this</span>{% endif %}{% if importer_source == 'notify' %}<br><span class="help">Chosen from the notify party.</span>{% endif %}{% if importer_missing %}<br><span class="help">Not found on the document.</span>{% endif %}<br><span class="help">{{ form.importer_name.help_text }}</span></p>
+<datalist id="importer-list">{% for name in importer_names %}<option value="{{ name }}"></option>{% endfor %}</datalist>
+<p id="importer-status" class="help" aria-live="polite" hidden></p>
+<script type="application/json" id="importer-names">{{ importer_names_json|safe }}</script>
 <p>{{ form.bl_number.label_tag }} {{ form.bl_number }} {{ form.bl_number.errors }}{% if 'bl_number' in uncertain %} <span class="check-note">Check this</span>{% endif %}<br><span class="help">{{ form.bl_number.help_text }}</span></p>
 {% if duplicate_shipment %}<p class="error"><a href="{% url 'agent_shipment_detail' pk=duplicate_shipment %}">View the existing shipment</a>.</p>{% endif %}
 <p>{{ form.shipping_line.label_tag }} {{ form.shipping_line }} {{ form.shipping_line.errors }}{% if 'shipping_line' in uncertain %} <span class="check-note">Check this</span>{% endif %}</p>
@@ -94,6 +96,121 @@
     refreshRemove();
   });
   refreshRemove();
+})();
+// Transient banner: fade out after 8 seconds, removable at once.
+// Pauses while hovered or focused; never touches access-code messages.
+(function () {
+  var banner = document.querySelector('[data-transient]');
+  if (!banner) return;
+  if (/\d{6}/.test(banner.textContent)) return;
+  var dismissed = false;
+  var remaining = 8000;
+  var startedAt = 0;
+  var timer = null;
+  function remove() {
+    if (dismissed) return;
+    dismissed = true;
+    if (timer) clearTimeout(timer);
+    banner.remove();
+  }
+  function fire() {
+    if (dismissed) return;
+    if (
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      remove();
+      return;
+    }
+    banner.style.transition = 'opacity 300ms';
+    banner.style.opacity = '0';
+    timer = setTimeout(remove, 300);
+  }
+  function pause() {
+    if (dismissed || !timer) return;
+    clearTimeout(timer);
+    timer = null;
+    remaining -= Date.now() - startedAt;
+    if (remaining < 0) remaining = 0;
+  }
+  function resume() {
+    if (dismissed || timer) return;
+    startedAt = Date.now();
+    timer = setTimeout(fire, remaining);
+  }
+  banner.addEventListener('mouseenter', pause);
+  banner.addEventListener('mouseleave', resume);
+  banner.addEventListener('focusin', pause);
+  banner.addEventListener('focusout', resume);
+  var closer = banner.querySelector('[data-dismiss]');
+  if (closer) closer.addEventListener('click', remove);
+  startedAt = Date.now();
+  timer = setTimeout(fire, remaining);
+})();
+// Importer status: match the typed name against this company's
+// importers, ignoring letter case. Plain text only, no markup.
+(function () {
+  var field = document.getElementById('id_importer_name');
+  var status = document.getElementById('importer-status');
+  var data = document.getElementById('importer-names');
+  if (!field || !status || !data) return;
+  var names;
+  try {
+    names = JSON.parse(data.textContent);
+  } catch (e) {
+    return;
+  }
+  function icon(check) {
+    var svg = document.createElementNS(
+      'http://www.w3.org/2000/svg', 'svg'
+    );
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'status-icon');
+    var path = document.createElementNS(
+      'http://www.w3.org/2000/svg', 'path'
+    );
+    path.setAttribute('d', check ? 'M3 8.5l3.5 3.5L13 4.5' : 'M8 3v10M3 8h10');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+    return svg;
+  }
+  function refresh() {
+    var typed = field.value.trim();
+    status.textContent = '';
+    if (!typed) {
+      status.hidden = true;
+      status.className = 'help';
+      return;
+    }
+    var match = null;
+    for (var i = 0; i < names.length; i++) {
+      if (names[i].toLowerCase() === typed.toLowerCase()) {
+        match = names[i];
+        break;
+      }
+    }
+    status.hidden = false;
+    if (match) {
+      status.className = 'help imp-ok';
+      status.appendChild(icon(true));
+      status.appendChild(
+        document.createTextNode('Existing importer: ' + match)
+      );
+    } else {
+      status.className = 'help imp-new';
+      status.appendChild(icon(false));
+      status.appendChild(document.createTextNode(
+        'New importer. It will be created with its own access code.'
+      ));
+    }
+  }
+  field.addEventListener('input', refresh);
+  refresh();
 })();
 </script>
 {% endblock %}

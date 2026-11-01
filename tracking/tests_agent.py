@@ -217,10 +217,9 @@ class AgentTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def _new_shipment_post(self, importer_pk='', **overrides):
+    def _new_shipment_post(self, importer_name='', **overrides):
         data = {
-            'importer': importer_pk,
-            'new_importer_name': '',
+            'importer_name': importer_name,
             'bl_number': 'NEWBL001',
             'shipping_line': '',
             'port': 'Onne',
@@ -237,7 +236,7 @@ class AgentTests(TestCase):
         importer = self._importer(company)
         self.client.force_login(user)
         response = self._new_shipment_post(
-            importer_pk=str(importer.pk), bl_number='newbl001'
+            importer_name=importer.name, bl_number='newbl001'
         )
         self.assertEqual(response.status_code, 302)
         shipment = Shipment.objects.get(bl_number='NEWBL001')
@@ -276,7 +275,7 @@ class AgentTests(TestCase):
         importer = self._importer(company)
         self.client.force_login(user)
         response = self._new_shipment_post(
-            importer_pk=str(importer.pk),
+            importer_name=importer.name,
             bl_number='BADBL001',
             c_number=['CSQU3054384'],
             c_size=['40ft'],
@@ -292,7 +291,7 @@ class AgentTests(TestCase):
         importer = self._importer(company)
         self.client.force_login(user)
         response = self._new_shipment_post(
-            importer_pk=str(importer.pk),
+            importer_name=importer.name,
             bl_number='DUPBL001',
             c_number=['CSQU3054383', 'csqu-3054383'],
             c_size=['40ft', '20ft'],
@@ -308,7 +307,7 @@ class AgentTests(TestCase):
         importer = self._importer(company)
         self.client.force_login(user)
         response = self._new_shipment_post(
-            importer_pk=str(importer.pk),
+            importer_name=importer.name,
             bl_number='SIZEBL001',
             c_number=['CSQU3054383'],
             c_size=[''],
@@ -326,8 +325,7 @@ class AgentTests(TestCase):
         importer = self._importer(company)
         self.client.force_login(user)
         data = {
-            'importer': str(importer.pk),
-            'new_importer_name': '',
+            'importer_name': importer.name,
             'bl_number': 'EMPTYBL001',
             'shipping_line': '',
             'port': 'Onne',
@@ -345,11 +343,62 @@ class AgentTests(TestCase):
         user = self._agent(company, 'code-creator')
         self.client.force_login(user)
         response = self._new_shipment_post(
-            new_importer_name='Brand New Importer', bl_number='CODEBL001'
+            importer_name='Brand New Importer', bl_number='CODEBL001'
         )
         self.assertEqual(response.status_code, 302)
         importer = Importer.objects.get(name='Brand New Importer')
         self.assertRegex(importer.access_code, r'^\d{6}$')
+
+    def test_single_importer_field_with_datalist(self):
+        company = self._company('Single Co')
+        self.client.force_login(self._agent(company, 'singler'))
+        self._importer(company, name='Solo Foods')
+        response = self.client.get('/agent/shipments/new/')
+        self.assertContains(response, 'name="importer_name"')
+        self.assertContains(response, 'list="importer-list"')
+        self.assertContains(response, '<datalist id="importer-list"')
+        self.assertContains(response, '<option value="Solo Foods">')
+        self.assertContains(
+            response, 'Type a name or pick from the list.'
+        )
+        self.assertContains(response, 'id="importer-status"')
+        self.assertContains(response, 'id="importer-names"')
+        self.assertContains(response, 'Existing importer: ')
+        self.assertContains(
+            response,
+            'New importer. It will be created with its own access code.',
+        )
+        self.assertNotContains(response, 'name="importer"')
+        self.assertNotContains(response, 'Select an importer')
+        self.assertNotContains(response, 'new_importer_name')
+
+    def test_case_insensitive_match_reuses_importer(self):
+        company = self._company('Case Co')
+        self.client.force_login(self._agent(company, 'caser'))
+        importer = self._importer(company, name='Solo Foods')
+        response = self._new_shipment_post(
+            importer_name='  sOLO   fOODS ', bl_number='CASEBL001'
+        )
+        self.assertEqual(response.status_code, 302)
+        shipment = Shipment.objects.get(bl_number='CASEBL001')
+        self.assertEqual(shipment.importer, importer)
+        self.assertEqual(shipment.importer.name, 'Solo Foods')
+        self.assertEqual(
+            Importer.objects.filter(agent_company=company).count(), 1
+        )
+
+    def test_empty_importer_name_refused(self):
+        company = self._company('Noname Co')
+        self.client.force_login(self._agent(company, 'nonamer'))
+        self._importer(company, name='Solo Foods')
+        response = self._new_shipment_post(
+            importer_name='   ', bl_number='NONAMEBL001'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Enter an importer name.')
+        self.assertFalse(
+            Shipment.objects.filter(bl_number='NONAMEBL001').exists()
+        )
 
     def test_add_importer(self):
         company = self._company('Add Co')
@@ -426,16 +475,18 @@ class AgentTests(TestCase):
         response = self.client.get(
             '/agent/shipments/new/?importer=%d' % importer.pk
         )
-        self.assertIn(
-            '<option value="%d" selected>' % importer.pk,
-            response.content.decode(),
+        self.assertEqual(
+            response.content.decode().count(
+                'value="%s"' % importer.name
+            ),
+            2,
         )
         response = self.client.get(
             '/agent/shipments/new/?importer=%d' % foreign.pk
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(
-            '<option value="%d" selected>' % foreign.pk,
+            'value="Foreign Foods"',
             response.content.decode(),
         )
         self.assertNotContains(response, 'Foreign Foods')
@@ -632,6 +683,18 @@ class AgentTests(TestCase):
         )
         self.assertLess(html.index('id-imp-search'), html.index('imp-grid'))
 
+    def test_access_code_message_not_transient(self):
+        company = self._company('Transient Co')
+        self.client.force_login(self._agent(company, 'transient'))
+        solo = self._importer(company, name='Solo Foods')
+        response = self.client.post(
+            '/agent/importers/%d/rotate/' % solo.pk, follow=True
+        )
+        html = response.content.decode()
+        msg_start = html.index('id="rotated-msg"')
+        msg_end = html.index('</div>', msg_start)
+        self.assertNotIn('data-transient', html[msg_start:msg_end])
+
     def test_importer_add_requires_login(self):
         response = self.client.post(
             '/agent/importers/add/', {'name': 'Nope'}
@@ -689,7 +752,7 @@ class AgentTests(TestCase):
         self.assertContains(response, 'Solo Foods')
         self.assertNotContains(response, 'Acme Clearing Ltd')
         response = self.client.get('/agent/shipments/new/')
-        self.assertContains(response, '>Solo Foods</option>')
+        self.assertContains(response, '<option value="Solo Foods">')
         self.assertNotContains(response, 'Acme Clearing Ltd')
         response = self.client.get('/agent/shipments/')
         self.assertContains(response, 'Solo Foods')
@@ -810,7 +873,7 @@ class AgentTests(TestCase):
         existing.save()
         self.client.force_login(user)
         response = self._new_shipment_post(
-            importer_pk=str(importer.pk),
+            importer_name=importer.name,
             bl_number=' dup bl001 ',
             c_number=['CSQU3054383'],
             c_size=['40ft'],
@@ -838,7 +901,7 @@ class AgentTests(TestCase):
         importer_a = self._importer(company_a)
         self.client.force_login(user_a)
         response = self._new_shipment_post(
-            importer_pk=str(importer_a.pk), bl_number='sharedbl001'
+            importer_name=importer_a.name, bl_number='sharedbl001'
         )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(

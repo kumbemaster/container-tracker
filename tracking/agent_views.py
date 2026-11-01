@@ -298,23 +298,31 @@ def _random_code():
 @agent_required
 def shipment_new(request):
     company = request.agent_company
+    names = list(
+        Importer.objects.filter(agent_company=company)
+        .order_by('name')
+        .values_list('name', flat=True)
+    )
     context = {
         'uncertain': [],
         'prefill': False,
         'scan_document': None,
         'importer_check': False,
         'importer_source': None,
+        'importer_missing': False,
+        'importer_names': names,
+        'importer_names_json': json.dumps(names),
         'css_version': _css_version(),
     }
     if request.method == 'POST':
         form = ShipmentForm(company, request.POST)
         if form.is_valid():
             with transaction.atomic():
-                importer = form.cleaned_data['importer']
+                importer = form.resolved_importer
                 if importer is None:
                     importer, _ = Importer.objects.get_or_create(
                         agent_company=company,
-                        name=form.importer_name(),
+                        name=form.cleaned_data['importer_name'],
                         defaults={'access_code': _random_code()},
                     )
                 shipment = Shipment.objects.create(
@@ -339,7 +347,7 @@ def shipment_new(request):
                 pk=int(raw_preselected), agent_company=company
             ).first()
             if preselected is not None:
-                initial['importer'] = preselected
+                initial['importer_name'] = preselected.name
         form = ShipmentForm(company, initial=initial)
         _apply_scan_prefill(request, company, form, context)
     context['form'] = form
@@ -390,13 +398,7 @@ def _apply_scan_prefill(request, company, form, context):
             form.initial[key] = result[key]
     importer_name = (result.get('importer_name') or '').strip()
     if importer_name:
-        match = Importer.objects.filter(
-            agent_company=company, name__iexact=importer_name
-        ).first()
-        if match is not None:
-            form.initial['importer'] = match.pk
-        else:
-            form.initial['new_importer_name'] = importer_name
+        form.initial['importer_name'] = importer_name
     rows = []
     for item in result.get('containers') or []:
         rows.append(
@@ -420,6 +422,9 @@ def _apply_scan_prefill(request, company, form, context):
             'scan_document': document_pk,
             'importer_check': 'importer_name' in uncertain,
             'importer_source': result.get('importer_source'),
+            'importer_missing': not (
+                result.get('importer_name') or ''
+            ).strip(),
         }
     )
 
@@ -446,6 +451,9 @@ def _restore_scan_context(request, company, form, context):
             'scan_document': document_pk,
             'importer_check': 'importer_name' in uncertain,
             'importer_source': result.get('importer_source'),
+            'importer_missing': not (
+                result.get('importer_name') or ''
+            ).strip(),
         }
     )
 
