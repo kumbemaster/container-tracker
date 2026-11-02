@@ -17,6 +17,7 @@
 <input id="id-confirm-word" type="text" name="confirm_word" autocomplete="off" required>
 <label for="id-current-password">Current password</label>
 <input id="id-current-password" type="password" name="current_password" autocomplete="current-password" required>
+<p><label><input type="checkbox" name="reset_codes"> Also reset every importer's access code (their devices will need the new code)</label></p>
 <button type="submit" class="btn btn-danger btn-solid">Clear all shipments</button>
 </form>
 <p><a class="btn btn-secondary" href="{% url 'agent_shipments' %}">Cancel</a></p>

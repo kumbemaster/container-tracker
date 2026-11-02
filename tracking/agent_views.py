@@ -1269,11 +1269,22 @@ def deleted_list(request):
         .prefetch_related('containers')
         .order_by('-deleted_at')
     )
+    rows = []
+    for shipment in shipments:
+        purgeable, reason = shipment_stages.is_purgeable(shipment)
+        rows.append(
+            {
+                'shipment': shipment,
+                'purgeable': purgeable,
+                'purge_reason': reason,
+            }
+        )
     return render(
         request,
         'tracking/agent_shipments_deleted.html',
         {
-            'shipments': shipments,
+            'rows': rows,
+            'purgeable_count': sum(1 for row in rows if row['purgeable']),
             'is_owner': _is_owner(request.user),
             'css_version': _css_version(),
         },
@@ -1348,6 +1359,7 @@ def shipment_clear(request):
             counts['documents'] = Document.objects.filter(
                 company=company
             ).count()
+            reset_codes = bool(request.POST.get('reset_codes'))
             now = timezone.now()
             with transaction.atomic():
                 for shipment in shipments:
@@ -1360,18 +1372,28 @@ def shipment_clear(request):
                         action='shipment_cleared',
                         new_value='Cleared in bulk',
                     )
+                rotated = 0
+                if reset_codes:
+                    for importer in Importer.objects.filter(
+                        agent_company=company
+                    ):
+                        access_helpers.rotate_code(
+                            importer, _random_code()
+                        )
+                        rotated += 1
                 CompanyEvent.objects.create(
                     company=company,
                     user=request.user,
                     action='shipments_cleared',
                     detail=(
                         'shipments=%d containers=%d importers=%d '
-                        'documents=%d'
+                        'documents=%d codes_reset=%d'
                         % (
                             counts['shipments'],
                             counts['containers'],
                             counts['importers'],
                             counts['documents'],
+                            rotated,
                         )
                     ),
                 )
@@ -1380,6 +1402,12 @@ def shipment_clear(request):
                 '%d shipments cleared. You can restore them from '
                 'Deleted shipments.' % counts['shipments'],
             )
+            if reset_codes:
+                messages.success(
+                    request,
+                    '%d importer codes were reset. See the Importers '
+                    'page.' % rotated,
+                )
             return redirect('agent_shipments')
     counts = _danger_counts(shipments)
     counts['documents'] = Document.objects.filter(
@@ -1404,11 +1432,17 @@ def shipment_purge(request):
     company = request.agent_company
     key = 'danger-user:%d' % request.user.pk
     error = None
-    shipments = list(
+    deleted = list(
         Shipment.objects.filter(
             importer__agent_company=company, deleted_at__isnull=False
         ).order_by('pk')
     )
+    shipments = [
+        shipment
+        for shipment in deleted
+        if shipment_stages.is_purgeable(shipment)[0]
+    ]
+    skipped = len(deleted) - len(shipments)
     if request.method == 'POST':
         if access_helpers.is_locked(key):
             error = LOGIN_LOCKED_MESSAGE
@@ -1423,6 +1457,7 @@ def shipment_purge(request):
         else:
             access_helpers.clear_failures(key)
             counts = _danger_counts(shipments)
+            counts['skipped'] = skipped
             shipment_ids = [shipment.pk for shipment in shipments]
             with transaction.atomic():
                 for document in Document.objects.filter(
@@ -1447,20 +1482,26 @@ def shipment_purge(request):
                     action='shipments_purged',
                     detail=(
                         'shipments=%d containers=%d importers=%d '
-                        'documents=%d'
+                        'documents=%d skipped=%d'
                         % (
                             counts['shipments'],
                             counts['containers'],
                             counts['importers'],
                             counts['documents'],
+                            counts['skipped'],
                         )
                     ),
                 )
-            messages.success(
-                request,
+            message = (
                 '%d deleted shipments permanently removed.'
-                % counts['shipments'],
+                % counts['shipments']
             )
+            if counts['skipped']:
+                message += (
+                    ' %d left in Deleted shipments.'
+                    % counts['skipped']
+                )
+            messages.success(request, message)
             return redirect('agent_deleted_shipments')
     return render(
         request,

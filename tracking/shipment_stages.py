@@ -8,6 +8,47 @@ from .models import AuditLog, StageEvent
 
 ALREADY_RECORDED = 'Already recorded.'
 
+EMPTY_RETURNED_KEY = 'empty_container_returned'
+
+NOT_RETURNED_REASON = 'The empty container has not been returned yet.'
+UNFINISHED_REASON = (
+    'Steps have been recorded but the shipment is not finished.'
+)
+
+
+def is_purgeable(shipment):
+    """(True, '') when a soft-deleted shipment may be purged.
+
+    Only finished shipments (every container has the empty container
+    returned) and never-started ones (no container has any completed
+    stage) can be deleted permanently.
+    """
+    if shipment.deleted_at is None:
+        return False, 'The shipment has not been deleted yet.'
+    done = {}
+    for event in StageEvent.objects.filter(
+        container__shipment=shipment
+    ).select_related('stage'):
+        if event.skipped or event.occurred_at is None:
+            continue
+        done.setdefault(event.container_id, set()).add(event.stage.key)
+    container_ids = list(
+        shipment.containers.values_list('pk', flat=True)
+    )
+    if not any(done.get(pk) for pk in container_ids):
+        return True, ''
+    if all(
+        EMPTY_RETURNED_KEY in done.get(pk, set())
+        for pk in container_ids
+    ):
+        return True, ''
+    if any(
+        EMPTY_RETURNED_KEY in done.get(pk, set())
+        for pk in container_ids
+    ):
+        return False, NOT_RETURNED_REASON
+    return False, UNFINISHED_REASON
+
 
 def record_container_stage(
     user, shipment, container, stage, when, note, source

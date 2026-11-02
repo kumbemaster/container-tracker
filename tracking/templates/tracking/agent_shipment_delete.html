@@ -11,6 +11,7 @@
 {% for container in containers %}<span class="mono">{{ container.number }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
 </p>
 <p>This removes the shipment from your list and from the importer's view. The importer will no longer be able to track it. You can restore it later from Deleted shipments.</p>
+<p>The importer's access code stays the same. To stop an importer from tracking anything, rotate their code on the Importers page.</p>
 <form method="post" action="{% url 'agent_shipment_delete' pk=shipment.pk %}">
 {% csrf_token %}
 <button type="submit" class="btn btn-danger btn-solid">Delete shipment</button>

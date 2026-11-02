@@ -199,13 +199,16 @@
       status.className = 'help imp-ok';
       status.appendChild(icon(true));
       status.appendChild(
-        document.createTextNode('Existing importer: ' + match)
+        document.createTextNode(
+          'Registered importer: ' + match
+          + '. Their access code stays the same.'
+        )
       );
     } else {
       status.className = 'help imp-new';
       status.appendChild(icon(false));
       status.appendChild(document.createTextNode(
-        'New importer. It will be created with its own access code.'
+        'New importer: ' + typed + '. A new access code will be created.'
       ));
     }
   }

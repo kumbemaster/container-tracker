@@ -10,7 +10,7 @@ from django.utils import timezone
 from . import access as access_helpers
 from . import timeline as timeline_helpers
 from .clocks import build_clocks
-from .models import Container, StageExplanation
+from .models import Container, Shipment, StageExplanation
 
 COOKIE_NAME = 'device_token'
 ONE_YEAR = 365 * 24 * 60 * 60
@@ -70,6 +70,42 @@ def _is_deleted(target):
     return target.deleted_at is not None
 
 
+def _active_target(query):
+    """find_target, but never a soft-deleted shipment.
+
+    find_target can prefer a deleted match when it is newer; fall back
+    to the newest non-deleted match with the same preference (open
+    shipments first, then newest) so a deleted duplicate never hides
+    an active shipment.
+    """
+    target = access_helpers.find_target(query)
+    if target is not None and not _is_deleted(target):
+        return target
+    text = _normalise(query)
+    if not text:
+        return None
+    containers = list(
+        Container.objects.filter(
+            number=text, shipment__deleted_at__isnull=True
+        ).select_related('shipment')
+    )
+    if containers:
+        containers.sort(
+            key=lambda item: (
+                item.shipment.closed_at is not None,
+                -item.shipment.pk,
+            )
+        )
+        return containers[0]
+    return (
+        Shipment.objects.filter(
+            bl_number=text, deleted_at__isnull=True
+        )
+        .order_by('-pk')
+        .first()
+    )
+
+
 @require_GET
 def search(request):
     response = render(
@@ -87,7 +123,7 @@ def search(request):
 @require_POST
 def track(request):
     raw_query = request.POST.get('q', '')
-    target = access_helpers.find_target(raw_query)
+    target = _active_target(raw_query)
     if target is not None and not _is_deleted(target):
         session = _session_from_request(request)
         if session is not None and access_helpers.has_access(
@@ -126,7 +162,7 @@ def verify(request):
             },
         )
         return _private(response)
-    target = access_helpers.find_target(raw_query)
+    target = _active_target(raw_query)
     if target is not None and _is_deleted(target):
         target = None
     owner = _owner_of(target) if target is not None else None
@@ -240,7 +276,7 @@ def _panel_context(container, explanations=None):
 
 @require_GET
 def timeline(request, ref):
-    target = access_helpers.find_target(ref)
+    target = _active_target(ref)
     if target is None or _is_deleted(target):
         return _private(redirect('/'))
     session = _session_from_request(request)

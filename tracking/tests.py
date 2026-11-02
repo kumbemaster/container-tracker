@@ -1032,3 +1032,102 @@ class TimelineGroupTests(TestCase):
             self.assertNotContains(page, 'Shipping line free time')
             self.assertNotContains(page, 'Return the empty container')
             self.assertNotContains(page, 'return window')
+
+
+class DeletedTrackingTests(TestCase):
+    def setUp(self):
+        self.company = AgentCompany.objects.create(name='Vanished Ltd')
+        self.importer = Importer.objects.create(
+            agent_company=self.company, name='Vanished Foods',
+            access_code='482910',
+        )
+        self.shipment = Shipment.objects.create(
+            importer=self.importer, bl_number='VANBL001',
+            shipping_line='Line', port='Onne',
+            destination_area='Port Harcourt',
+        )
+        self.container = Container.objects.create(
+            shipment=self.shipment, number='VANC000001', size='20ft'
+        )
+
+    def _delete_shipment(self):
+        from django.utils import timezone
+
+        self.shipment.deleted_at = timezone.now()
+        self.shipment.save(update_fields=['deleted_at'])
+
+    def test_deleted_bl_verify_neutral(self):
+        self._delete_shipment()
+        response = self.client.post(
+            '/track/verify/', {'q': 'VANBL001', 'code': '482910'}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, WRONG_DETAILS_MESSAGE)
+        self.assertNotContains(response, 'Vanished Foods')
+        self.assertNotContains(response, 'Vanished Ltd')
+
+    def test_deleted_container_verify_neutral(self):
+        self._delete_shipment()
+        response = self.client.post(
+            '/track/verify/', {'q': 'VANC000001', 'code': '482910'}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, WRONG_DETAILS_MESSAGE)
+        self.assertNotContains(response, 'Vanished Foods')
+        self.assertNotContains(response, 'Vanished Ltd')
+
+    def test_deleted_track_shows_dialog_without_redirect(self):
+        self._delete_shipment()
+        for query in ('VANBL001', 'VANC000001'):
+            response = self.client.post('/track/', {'q': query})
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, 'Vanished Foods')
+
+    def test_deleted_timeline_redirects_home(self):
+        self._delete_shipment()
+        for ref in ('VANBL001', 'VANC000001'):
+            response = self.client.get('/s/%s/' % ref)
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response['Location'], '/')
+
+    def test_duplicate_container_prefers_active(self):
+        self.container.number = 'DUPC000001'
+        self.container.save(update_fields=['number'])
+        other_importer = Importer.objects.create(
+            agent_company=self.company, name='Second Foods',
+            access_code='654321',
+        )
+        other_shipment = Shipment.objects.create(
+            importer=other_importer, bl_number='DUPBL002',
+            shipping_line='Line', port='Onne',
+            destination_area='Port Harcourt',
+        )
+        Container.objects.create(
+            shipment=other_shipment, number='DUPC000001', size='20ft'
+        )
+        other_shipment.deleted_at = timezone.now()
+        other_shipment.save(update_fields=['deleted_at'])
+        response = self.client.post(
+            '/track/verify/', {'q': 'DUPC000001', 'code': '482910'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/s/DUPC000001/')
+        response = self.client.get('/s/DUPC000001/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'DUPC000001')
+
+    def test_duplicate_bl_prefers_active(self):
+        from django.utils import timezone
+
+        newer = Shipment.objects.create(
+            importer=self.importer, bl_number='VANBL001',
+            shipping_line='Line', port='Onne',
+            destination_area='Port Harcourt',
+        )
+        newer.deleted_at = timezone.now()
+        newer.save(update_fields=['deleted_at'])
+        response = self.client.post(
+            '/track/verify/', {'q': 'VANBL001', 'code': '482910'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], '/s/VANBL001/')

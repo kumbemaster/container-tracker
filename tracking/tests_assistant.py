@@ -540,6 +540,17 @@ class AssistantToolsTests(TestCase):
         self.assertNotIn('access_code', blob)
         self.assertNotIn('123456', blob)
 
+    def test_deleted_shipment_invisible_to_tools(self):
+        company = AgentCompany.objects.create(name='Assist Gone')
+        shipment, _, _ = _shipment(company, bl='GONEBL001')
+        shipment.deleted_at = timezone.now()
+        shipment.save(update_fields=['deleted_at'])
+        result = find_shipments(company, 'GONEBL001')
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['shipments'], [])
+        result = get_shipment(company, shipment.pk)
+        self.assertFalse(result['ok'])
+
     def test_get_shipment_foreign_id_is_plain_error(self):
         company_a = AgentCompany.objects.create(name='Assist Get A')
         company_b = AgentCompany.objects.create(name='Assist Get B')

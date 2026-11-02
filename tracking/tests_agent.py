@@ -393,10 +393,13 @@ class AgentTests(TestCase):
         )
         self.assertContains(response, 'id="importer-status"')
         self.assertContains(response, 'id="importer-names"')
-        self.assertContains(response, 'Existing importer: ')
+        self.assertContains(response, 'Registered importer: ')
+        self.assertContains(
+            response, 'Their access code stays the same.'
+        )
         self.assertContains(
             response,
-            'New importer. It will be created with its own access code.',
+            'A new access code will be created.',
         )
         self.assertNotContains(response, 'name="importer"')
         self.assertNotContains(response, 'Select an importer')
@@ -921,6 +924,47 @@ class AgentTests(TestCase):
                 importer__agent_company=company
             ).count(),
             1,
+        )
+
+    def test_deleted_bl_reusable(self):
+        company = self._company('Deleted BL Co')
+        user = self._agent(company, 'deleted-bl')
+        importer = self._importer(company)
+        old = self._shipment(importer, bl='GONEBL009')
+        old.deleted_at = timezone.now()
+        old.save(update_fields=['deleted_at'])
+        self.client.force_login(user)
+        response = self._new_shipment_post(
+            importer_name=importer.name,
+            bl_number='gonebl009',
+            c_number=['CSQU3054383'],
+            c_size=['40ft'],
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Shipment.objects.filter(
+                bl_number='GONEBL009', deleted_at__isnull=True
+            ).exists()
+        )
+
+    def test_purged_bl_reusable(self):
+        company = self._company('Purged BL Co')
+        user = self._agent(company, 'purged-bl')
+        importer = self._importer(company)
+        old = self._shipment(importer, bl='GONEBL010')
+        old.delete()
+        self.client.force_login(user)
+        response = self._new_shipment_post(
+            importer_name=importer.name,
+            bl_number='gonebl010',
+            c_number=['CSQU3054383'],
+            c_size=['40ft'],
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Shipment.objects.filter(
+                bl_number='GONEBL010', deleted_at__isnull=True
+            ).exists()
         )
 
     def test_same_bl_other_company_allowed(self):
@@ -2192,19 +2236,23 @@ class DangerZoneTests(TestCase):
         AuditLog.objects.create(
             shipment=gone, user=owner, action='stage_completed'
         )
+        purged, purged_container = self._shipment(
+            importer, 'GONEBL002', 'GONE000002'
+        )
         kept, kept_container = self._shipment(
             importer, 'KEEPBL001', 'KEEP000001'
         )
         with override_settings(MEDIA_ROOT=media_root):
             document = Document.objects.create(
                 company=company, uploaded_by=owner, kind='bl',
-                shipment=gone,
+                shipment=purged,
             )
             document.file.save('scan.jpg', ContentFile(b'fake-bytes'))
             file_path = document.file.path
             self.assertTrue(os.path.exists(file_path))
-            gone.deleted_at = timezone.now()
-            gone.save(update_fields=['deleted_at'])
+            for shipment in (gone, purged):
+                shipment.deleted_at = timezone.now()
+                shipment.save(update_fields=['deleted_at'])
             self.client.force_login(owner)
             response = self.client.post(
                 '/agent/shipments/purge/',
@@ -2217,17 +2265,23 @@ class DangerZoneTests(TestCase):
             self.assertContains(
                 response, '1 deleted shipments permanently removed.'
             )
-            self.assertFalse(
+            self.assertContains(response, '1 left in Deleted shipments.')
+            self.assertTrue(
                 Shipment.objects.filter(pk=gone.pk).exists()
             )
-            self.assertFalse(
-                Container.objects.filter(pk=gone_container.pk).exists()
-            )
-            self.assertFalse(
+            self.assertTrue(
                 StageEvent.objects.filter(pk=event.pk).exists()
             )
             self.assertFalse(
-                AuditLog.objects.filter(shipment_id=gone.pk).exists()
+                Shipment.objects.filter(pk=purged.pk).exists()
+            )
+            self.assertFalse(
+                Container.objects.filter(
+                    pk=purged_container.pk
+                ).exists()
+            )
+            self.assertFalse(
+                AuditLog.objects.filter(shipment_id=purged.pk).exists()
             )
             self.assertFalse(
                 Document.objects.filter(pk=document.pk).exists()
@@ -2245,6 +2299,7 @@ class DangerZoneTests(TestCase):
                 company=company, action='shipments_purged'
             )
             self.assertIn('shipments=1', event.detail)
+            self.assertIn('skipped=1', event.detail)
             importer.refresh_from_db()
             self.assertEqual(importer.access_code, '482910')
 
@@ -2392,3 +2447,190 @@ class DangerZoneTests(TestCase):
         self.client.force_login(owner)
         html = self.client.get('/agent/importers/').content.decode()
         self.assertIn('class="imp-add" open', html)
+
+    def test_is_purgeable_matrix(self):
+        company = self._company('Purgeable Co')
+        self._user(company, 'purgeable-owner')
+        importer = self._importer(company)
+        active, _ = self._shipment(importer, 'ACTBL001', 'ACT000001')
+        self.assertEqual(
+            shipment_stages.is_purgeable(active),
+            (False, 'The shipment has not been deleted yet.'),
+        )
+        fresh, _ = self._shipment(importer, 'FRESHBL001', 'FRESH000001')
+        fresh.deleted_at = timezone.now()
+        fresh.save(update_fields=['deleted_at'])
+        self.assertEqual(
+            shipment_stages.is_purgeable(fresh), (True, '')
+        )
+        midway, midway_container = self._shipment(
+            importer, 'MIDBL001', 'MID000001'
+        )
+        StageEvent.objects.create(
+            container=midway_container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=timezone.now(),
+        )
+        midway.deleted_at = timezone.now()
+        midway.save(update_fields=['deleted_at'])
+        self.assertEqual(
+            shipment_stages.is_purgeable(midway),
+            (
+                False,
+                'Steps have been recorded but the shipment is not '
+                'finished.',
+            ),
+        )
+        done, done_container = self._shipment(
+            importer, 'DONEBL001', 'DONE000001'
+        )
+        StageEvent.objects.create(
+            container=done_container,
+            stage=Stage.objects.get(key='empty_container_returned'),
+            occurred_at=timezone.now(),
+        )
+        done.deleted_at = timezone.now()
+        done.save(update_fields=['deleted_at'])
+        self.assertEqual(
+            shipment_stages.is_purgeable(done), (True, '')
+        )
+        partial, partial_container = self._shipment(
+            importer, 'PARTBL001', 'PART000001'
+        )
+        other_container = Container.objects.create(
+            shipment=partial, number='PART000002', size='20ft'
+        )
+        StageEvent.objects.create(
+            container=partial_container,
+            stage=Stage.objects.get(key='empty_container_returned'),
+            occurred_at=timezone.now(),
+        )
+        StageEvent.objects.create(
+            container=other_container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=timezone.now(),
+        )
+        partial.deleted_at = timezone.now()
+        partial.save(update_fields=['deleted_at'])
+        self.assertEqual(
+            shipment_stages.is_purgeable(partial),
+            (
+                False,
+                'The empty container has not been returned yet.',
+            ),
+        )
+
+    def test_deleted_rows_show_purge_status(self):
+        company = self._company('Row Status Co')
+        owner = self._user(company, 'row-owner')
+        importer = self._importer(company)
+        fresh, _ = self._shipment(importer, 'ROWBL001', 'ROW000001')
+        midway, midway_container = self._shipment(
+            importer, 'ROWBL002', 'ROW000002'
+        )
+        StageEvent.objects.create(
+            container=midway_container,
+            stage=Stage.objects.get(key='arrived_at_port'),
+            occurred_at=timezone.now(),
+        )
+        for shipment in (fresh, midway):
+            shipment.deleted_at = timezone.now()
+            shipment.save(update_fields=['deleted_at'])
+        self.client.force_login(owner)
+        response = self.client.get('/agent/shipments/deleted/')
+        self.assertContains(response, 'Can be deleted permanently')
+        self.assertContains(
+            response,
+            'Steps have been recorded but the shipment is not finished.',
+        )
+        self.assertContains(
+            response,
+            '1 of 2 deleted shipments can be deleted permanently. '
+            'The others stay here and can be restored.',
+        )
+
+    def test_clear_with_code_reset(self):
+        company = self._company('Reset Co')
+        owner = self._user(company, 'reset-owner')
+        importer = self._importer(company, code='111111')
+        session, _ = access_helpers.create_device_session()
+        access_helpers.grant_access(session, importer)
+        shipment, _ = self._shipment(importer, 'RESETBL001', 'RESET000001')
+        self.client.force_login(owner)
+        response = self.client.post(
+            '/agent/shipments/clear/',
+            {
+                'confirm_word': 'CLEAR',
+                'current_password': 'secret123',
+                'reset_codes': 'on',
+            },
+            follow=True,
+        )
+        self.assertContains(
+            response,
+            '1 shipments cleared. You can restore them from '
+            'Deleted shipments.',
+        )
+        self.assertContains(
+            response,
+            '1 importer codes were reset. See the Importers page.',
+        )
+        importer.refresh_from_db()
+        self.assertNotEqual(importer.access_code, '111111')
+        self.assertRegex(importer.access_code, r'^\d{6}$')
+        self.assertFalse(
+            access_helpers.has_access(session, importer)
+        )
+        event = CompanyEvent.objects.get(
+            company=company, action='shipments_cleared'
+        )
+        self.assertIn('codes_reset=1', event.detail)
+        html = response.content.decode()
+        self.assertNotIn('111111', html)
+
+    def test_clear_without_reset_keeps_codes(self):
+        company = self._company('Keep Codes Co')
+        owner = self._user(company, 'keeper')
+        importer = self._importer(company, code='222222')
+        self._shipment(importer, 'KEEPBL002', 'KEEP000002')
+        self.client.force_login(owner)
+        response = self.client.post(
+            '/agent/shipments/clear/',
+            {'confirm_word': 'CLEAR', 'current_password': 'secret123'},
+            follow=True,
+        )
+        self.assertContains(response, '1 shipments cleared.')
+        self.assertNotContains(response, 'codes were reset')
+        importer.refresh_from_db()
+        self.assertEqual(importer.access_code, '222222')
+        event = CompanyEvent.objects.get(
+            company=company, action='shipments_cleared'
+        )
+        self.assertIn('codes_reset=0', event.detail)
+
+    def test_delete_page_code_sentence(self):
+        company = self._company('Delete Page Co')
+        owner = self._user(company, 'delete-viewer')
+        importer = self._importer(company)
+        shipment, _ = self._shipment(importer, 'PAGEBL001', 'PAGE000001')
+        self.client.force_login(owner)
+        response = self.client.get(
+            '/agent/shipments/%d/delete/' % shipment.pk
+        )
+        self.assertContains(
+            response, "The importer's access code stays the same."
+        )
+        self.assertContains(
+            response, 'rotate their code on the Importers page.',
+        )
+
+    def test_new_importer_wording(self):
+        company = self._company('Wording Co')
+        owner = self._user(company, 'wording-owner')
+        self._importer(company, name='Solo Foods')
+        self.client.force_login(owner)
+        html = self.client.get('/agent/shipments/new/').content.decode()
+        self.assertIn('Registered importer: ', html)
+        self.assertIn('Their access code stays the same.', html)
+        self.assertIn('A new access code will be created.', html)
+        self.assertNotIn('Existing importer', html)
