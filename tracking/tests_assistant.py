@@ -1745,3 +1745,19 @@ class AssistantLoopTests(TestCase):
         self.assertIn('never ask which containers', SYSTEM_INSTRUCTION)
         self.assertIn('propose them in order', SYSTEM_INSTRUCTION)
         self.assertIn('missing earlier steps', SYSTEM_INSTRUCTION)
+
+    def test_system_instruction_processing_order(self):
+        self.assertIn(
+            'Shipping line and terminal work can be processed once PAAR '
+            'is assessed, even before duty is paid.',
+            SYSTEM_INSTRUCTION,
+        )
+        self.assertIn(
+            'Customs processing and customs examination need duty paid '
+            'first.',
+            SYSTEM_INSTRUCTION,
+        )
+        self.assertIn(
+            'All three processing steps must be done before gate out.',
+            SYSTEM_INSTRUCTION,
+        )

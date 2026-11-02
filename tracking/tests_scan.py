@@ -450,6 +450,12 @@ class StageExplanationTextsTests(TestCase):
             'This can only happen after the duty is paid, and it must be '
             'done before the container can leave the port.',
         )
+        self.assertEqual(
+            texts['customs_examination'],
+            'Customs may physically examine a container to check the '
+            'goods against the documents. This happens after the duty is '
+            'paid and applies only to some shipments.',
+        )
 
 
 class ExtractionInstructionTests(TestCase):

@@ -6,7 +6,7 @@
   "en_route_to_bonded_terminal": "Some containers are first moved to a bonded terminal, a secure area approved for goods still being cleared. This step applies only to some shipments.",
   "shipping_line_processed": "The shipping line finishes its own processing, including issuing the Delivery Order (DO) that allows your container to be released.",
   "terminal_processed": "The terminal finishes its own processing for your container.",
-  "customs_examination": "Customs may physically examine a container to check the goods against the documents. This step applies only to some shipments.",
+  "customs_examination": "Customs may physically examine a container to check the goods against the documents. This happens after the duty is paid and applies only to some shipments.",
   "customs_processed": "Customs finishes its processing and releases your cargo. This can only happen after the duty is paid, and it must be done before the container can leave the port.",
   "gate_out": "This is when the gate pass and the EIR (Equipment Interchange Receipt) have both been issued and the container is out of the terminal.",
   "in_transit": "The container is on the road from the port to your delivery address.",

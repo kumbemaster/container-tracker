@@ -30,14 +30,6 @@ def _events_by_key(container):
     }
 
 
-def _sequenced_chain(stage):
-    return list(
-        Stage.objects.filter(is_sequenced=True, order__lt=stage.order).order_by(
-            'order'
-        )
-    )
-
-
 def prerequisites_of(stage, selected=()):
     """The stages that must be completed before this one.
 
@@ -45,11 +37,8 @@ def prerequisites_of(stage, selected=()):
     check_can_undo. A sequenced stage needs the previous sequenced
     stage in Stage.order (gate out also needs the release tracks and
     any selected optional stage it waits for); an unsequenced stage
-    needs its starts_after stage; customs examination keeps its chain
-    of sequenced stages.
+    needs its starts_after stage; arrived_at_port has none.
     """
-    if stage.key == 'customs_examination':
-        return _sequenced_chain(stage)
     prereqs = []
     if stage.is_sequenced:
         previous = (
@@ -92,12 +81,7 @@ def check_can_complete(container, stage, when):
     if when > timezone.now() + timedelta(minutes=5):
         problems.append('This time is in the future.')
     selected = selected_optional_keys(container)
-    prereqs = list(_sequenced_chain(stage)) if stage.is_sequenced else []
-    known = {prereq.id for prereq in prereqs}
-    for prereq in prerequisites_of(stage, selected):
-        if prereq.id not in known:
-            known.add(prereq.id)
-            prereqs.append(prereq)
+    prereqs = prerequisites_of(stage, selected)
     latest = None
     latest_label = None
     for prereq in prereqs:

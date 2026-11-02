@@ -82,7 +82,10 @@ agent names several steps in one sentence, propose them in order. An \
 already recorded step is never "proposed": "already recorded" and \
 "proposed" are different. Say it in one short sentence such as "Duty \
 paid is already recorded for DEMOBL002 (30 Oct, 09:16)." and do not \
-offer to propose it again."""
+offer to propose it again. Shipping line and terminal work can be processed \
+once PAAR is assessed, even before duty is paid. Customs processing and \
+customs examination need duty paid first. All three processing steps must \
+be done before gate out."""
 
 TOOL_DEFINITIONS = [
     {

@@ -1481,6 +1481,34 @@ class StageUpdateTests(TestCase):
             ).exists()
         )
 
+    def test_tiles_in_progress_follow_starts_after(self):
+        self.StageEvent.objects.create(
+            container=self.container2,
+            stage=self.Stage.objects.get(key='manifest_available'),
+            occurred_at=self.now - self.td(days=2),
+        )
+        self.StageEvent.objects.create(
+            container=self.container2,
+            stage=self.Stage.objects.get(key='paar_assessed'),
+            occurred_at=self.now - self.td(days=1),
+        )
+        html = self.client.get(
+            '/agent/shipments/%d/' % self.shipment.pk
+        ).content.decode()
+        self.assertIn('In progress', html)
+        self.assertEqual(
+            html.count(
+                'name="stage_key" value="shipping_line_processed"'
+            ),
+            2,
+        )
+        # Only container 1 (duty paid) offers Done for customs
+        # processed; container 2 shows no menu for it yet.
+        self.assertEqual(
+            html.count('name="stage_key" value="customs_processed"'),
+            1,
+        )
+
     def test_undo_button_disabled_with_reason(self):
         self.StageEvent.objects.create(
             container=self.container2,
@@ -1638,13 +1666,13 @@ class ShipmentStageTests(TestCase):
         self._prereqs('arrived_at_port', 'manifest_available',
                       'paar_assessed')
         StageEvent.objects.filter(
-            container=self.container2, stage__key='manifest_available'
+            container=self.container2, stage__key='paar_assessed'
         ).delete()
         problem = shipment_stages.complete_shipment_stage(
             self.shipment, self._stage('duty_paid'), self.user, 'manual'
         )
         self.assertEqual(
-            problem, 'Manifest available is not recorded yet.'
+            problem, 'PAAR assessed is not recorded yet.'
         )
         self.assertFalse(
             StageEvent.objects.filter(stage__key='duty_paid').exists()

@@ -1,6 +1,5 @@
 from datetime import timedelta
 
-from django.db.models import Q
 from django.utils import timezone
 
 from .models import Stage, StageEvent
@@ -171,27 +170,32 @@ def holding(container):
         'waiting_on_note': container.waiting_on_note,
         'pending_processing': [],
     }
-    duty_paid_done = StageEvent.objects.filter(
-        container=container,
-        stage__key='duty_paid',
-        skipped=False,
-        occurred_at__isnull=False,
-    ).exists()
-    if not duty_paid_done:
-        return info
-    resolved_ids = set(
-        StageEvent.objects.filter(
+    events = {
+        event.stage.key: event
+        for event in StageEvent.objects.filter(
             container=container
+        ).select_related('stage')
+    }
+
+    def _done(key):
+        event = events.get(key)
+        return (
+            event is not None
+            and not event.skipped
+            and event.occurred_at is not None
         )
-        .filter(Q(skipped=True) | Q(skipped=False, occurred_at__isnull=False))
-        .values_list('stage_id', flat=True)
-    )
-    labels = [
-        stage.label
-        for stage in Stage.objects.filter(is_processing_track=True).order_by(
-            'order'
-        )
-        if stage.id not in resolved_ids
-    ]
+
+    labels = []
+    for stage in Stage.objects.filter(is_processing_track=True).order_by(
+        'order'
+    ):
+        event = events.get(stage.key)
+        if event is not None and (
+            event.skipped or event.occurred_at is not None
+        ):
+            continue
+        if stage.starts_after and not _done(stage.starts_after):
+            continue
+        labels.append(stage.label)
     info['pending_processing'] = labels
     return info

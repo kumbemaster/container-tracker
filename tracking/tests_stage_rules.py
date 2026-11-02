@@ -188,6 +188,22 @@ class StageRuleTests(TestCase):
         )
         self.assertEqual(problems, [])
 
+    def test_customs_examination_needs_duty_paid(self):
+        self._complete('paar_assessed', days_ago=2)
+        problems = stage_rules.check_can_complete(
+            self.container,
+            self._stage('customs_examination'),
+            self.now,
+        )
+        self.assertEqual(problems, ['Duty paid is not recorded yet.'])
+        self._complete('duty_paid', days_ago=1)
+        problems = stage_rules.check_can_complete(
+            self.container,
+            self._stage('customs_examination'),
+            self.now,
+        )
+        self.assertEqual(problems, [])
+
     def test_en_route_needs_duty_paid(self):
         self._complete('paar_assessed', days_ago=2)
         problems = stage_rules.check_can_complete(
@@ -264,6 +280,82 @@ class StageRuleTests(TestCase):
         self.assertEqual(
             problems, ['Undo En route to bonded terminal first.']
         )
+
+    def test_undo_duty_blocked_by_customs_examination(self):
+        self._complete('duty_paid', days_ago=1)
+        self._complete('customs_examination', days_ago=0.5)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('duty_paid')
+        )
+        self.assertEqual(
+            problems, ['Undo Customs examination first.']
+        )
+
+    def test_undo_duty_blocked_by_gate_out(self):
+        for key, days_ago in [
+            ('duty_paid', 3),
+            ('shipping_line_processed', 2),
+            ('terminal_processed', 2),
+            ('customs_processed', 1),
+            ('gate_out', 0.5),
+        ]:
+            self._complete(key, days_ago=days_ago)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('duty_paid')
+        )
+        self.assertIn('Undo Gate out first.', problems)
+
+    def test_undo_terminal_blocked_only_by_gate_out(self):
+        self._complete('paar_assessed', days_ago=2)
+        self._complete('terminal_processed', days_ago=1)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('terminal_processed')
+        )
+        self.assertEqual(problems, [])
+        self._complete('duty_paid', days_ago=1.5)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('terminal_processed')
+        )
+        self.assertEqual(problems, [])
+        for key, days_ago in [
+            ('shipping_line_processed', 1),
+            ('customs_processed', 0.75),
+            ('gate_out', 0.5),
+        ]:
+            self._complete(key, days_ago=days_ago)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('terminal_processed')
+        )
+        self.assertEqual(problems, ['Undo Gate out first.'])
+
+    def test_undo_customs_track_blocked_only_by_gate_out(self):
+        self._complete('duty_paid', days_ago=2)
+        self._complete('customs_processed', days_ago=1)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('customs_processed')
+        )
+        self.assertEqual(problems, [])
+        self._complete('gate_out', days_ago=0.5)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('customs_processed')
+        )
+        self.assertEqual(problems, ['Undo Gate out first.'])
+
+    def test_undo_examination_blocked_only_by_selected_gate_out(self):
+        self._complete('duty_paid', days_ago=2)
+        self._complete('customs_examination', days_ago=1)
+        self._complete('gate_out', days_ago=0.5)
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('customs_examination')
+        )
+        self.assertEqual(problems, ['Undo Gate out first.'])
+        StageEvent.objects.filter(
+            container=self.container, stage__key='gate_out'
+        ).delete()
+        problems = stage_rules.check_can_undo(
+            self.container, self._stage('customs_examination')
+        )
+        self.assertEqual(problems, [])
 
     def test_undo_track_blocked_only_by_gate_out(self):
         self._complete('paar_assessed', days_ago=2)
@@ -382,6 +474,29 @@ class StageRuleTests(TestCase):
                 self.assertNotIn(
                     '%s is not recorded yet.' % prereq.label,
                     problems,
+                    (stage.key, prereq.key),
+                )
+                undo_container = self._fresh_container(
+                    'UND%d%s' % (stage.order, prereq.key)
+                )
+                self._complete_on(
+                    undo_container, prereq.key, days_ago=1
+                )
+                self.assertEqual(
+                    stage_rules.check_can_undo(
+                        undo_container, prereq
+                    ),
+                    [],
+                    (stage.key, prereq.key),
+                )
+                self._complete_on(
+                    undo_container, stage.key, days_ago=0
+                )
+                self.assertIn(
+                    'Undo %s first.' % stage.label,
+                    stage_rules.check_can_undo(
+                        undo_container, prereq
+                    ),
                     (stage.key, prereq.key),
                 )
 

@@ -611,6 +611,24 @@ class ContainerTimelineTests(TestCase):
             by_key['customs_processed']['state'], 'upcoming'
         )
 
+    def test_holding_pending_processing_follows_starts_after(self):
+        from django.utils import timezone
+
+        container = self._make_container('HOLD0000001')
+        for key in (
+            'arrived_at_port',
+            'manifest_available',
+            'paar_assessed',
+        ):
+            self._add_event(
+                container, key, occurred_at=timezone.now()
+            )
+        hold = timeline_helpers.holding(container)
+        self.assertEqual(
+            hold['pending_processing'],
+            ['Shipping line processed', 'Terminal processed'],
+        )
+
     def test_optional_selected_shown_and_skipped_hidden(self):
         container = self._make_container('OPT0000001')
         self._add_event(container, 'customs_examination')
