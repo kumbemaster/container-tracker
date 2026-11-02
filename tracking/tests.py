@@ -585,6 +585,32 @@ class ContainerTimelineTests(TestCase):
         self.assertEqual(hold['waiting_on'], 'customs')
         self.assertEqual(hold['pending_processing'], [])
 
+    def test_in_progress_follows_starts_after(self):
+        from django.utils import timezone
+
+        container = self._make_container('PROG0000001')
+        for key in (
+            'arrived_at_port',
+            'manifest_available',
+            'paar_assessed',
+        ):
+            self._add_event(
+                container, key, occurred_at=timezone.now()
+            )
+        by_key = {
+            step['key']: step
+            for step in timeline_helpers.build_timeline(container)
+        }
+        self.assertEqual(
+            by_key['shipping_line_processed']['state'], 'processing'
+        )
+        self.assertEqual(
+            by_key['terminal_processed']['state'], 'processing'
+        )
+        self.assertEqual(
+            by_key['customs_processed']['state'], 'upcoming'
+        )
+
     def test_optional_selected_shown_and_skipped_hidden(self):
         container = self._make_container('OPT0000001')
         self._add_event(container, 'customs_examination')

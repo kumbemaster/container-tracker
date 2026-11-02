@@ -1555,6 +1555,99 @@ class AssistantLoopTests(TestCase):
             6,
         )
 
+    def test_four_steps_with_tracks_confirmed(self):
+        company = AgentCompany.objects.create(name='Four Step Co')
+        user = _agent(company, 'four-user')
+        shipment, _, _ = _shipment(company, bl='FOURBL001')
+        calls = [
+            _tool_call(
+                'c%d' % number, 'propose_stage_done',
+                {'shipment_id': shipment.pk, 'stage_key': key},
+            )
+            for number, key in enumerate(
+                [
+                    'manifest_available',
+                    'paar_assessed',
+                    'shipping_line_processed',
+                    'terminal_processed',
+                ]
+            )
+        ]
+        client = _fake_client(
+            [_model_response(calls),
+             _model_response(content='Proposing four steps.')]
+        )
+        self.client.force_login(user)
+        with patch(
+            'tracking.ai.assistant.get_client', return_value=client
+        ):
+            response = self.client.post(
+                '/agent/assistant/',
+                data=json.dumps(
+                    {'text': 'manifest, PAAR assessed, shipping line '
+                             'processed and terminal processed'}
+                ),
+                content_type='application/json',
+            )
+        payload = json.loads(response.content)
+        self.assertEqual(payload['type'], 'proposal')
+        proposal = ProposedAction.objects.get(pk=payload['id'])
+        self.assertEqual(
+            [item['stage_key'] for item in proposal.actions],
+            [
+                'manifest_available',
+                'paar_assessed',
+                'shipping_line_processed',
+                'shipping_line_processed',
+                'terminal_processed',
+                'terminal_processed',
+            ],
+        )
+        self.assertEqual(len(payload['summary']), 6)
+        self.assertIn(
+            'Mark Manifest available done for FOURBL001 (all 2 containers).',
+            payload['summary'],
+        )
+        response = self.client.post(
+            '/agent/assistant/confirm/',
+            data=json.dumps({'proposal_id': proposal.pk}),
+            content_type='application/json',
+        )
+        payload = json.loads(response.content)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(len(payload['recorded']), 6)
+        self.assertEqual(payload['refused'], [])
+        self.assertEqual(
+            StageEvent.objects.filter(
+                occurred_at__isnull=False
+            ).count(),
+            8,
+        )
+
+    def test_customs_processed_dropped_before_duty(self):
+        company = AgentCompany.objects.create(name='Customs Drop Co')
+        user = _agent(company, 'customs-user')
+        shipment, _, _ = _shipment(company, bl='CUSTOMBL001')
+        pending = []
+        result = propose_stage_done(
+            company, shipment.pk, 'customs_processed',
+            pending=pending, user=user,
+        )
+        self.assertTrue(result['ok'])
+        self.assertEqual(len(result['results']), 2)
+        for entry in result['results']:
+            self.assertFalse(entry['ok'])
+            self.assertIn(
+                'Duty paid is not recorded yet.', entry['problem']
+            )
+        self.assertEqual(result['items'], [])
+        self.assertEqual(pending, [])
+        self.assertFalse(
+            StageEvent.objects.filter(
+                occurred_at__isnull=False
+            ).exists()
+        )
+
     def test_confirm_refuses_item_with_failed_dependency(self):
         company = AgentCompany.objects.create(name='Dep Fail Co')
         user = _agent(company, 'dep-user')

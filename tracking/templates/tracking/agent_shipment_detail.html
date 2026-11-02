@@ -73,11 +73,16 @@
 <details class="tile-menu">
 <summary>Actions</summary>
 <button type="button" class="small-btn" disabled>Done</button>
+{% if item.undo_problems %}
+<button type="button" class="small-btn" disabled>Undo</button>
+<p class="tile-note">{{ item.undo_problems.0 }}</p>
+{% else %}
 <form method="post" action="{% url 'agent_shipment_stage_undo' pk=shipment.pk %}">
 {% csrf_token %}
 <input type="hidden" name="stage_key" value="{{ item.stage.key }}">
 <button type="submit" class="small-btn">Undo</button>
 </form>
+{% endif %}
 </details>
 {% elif item.state == 'actionable' %}
 <details class="tile-menu">
@@ -134,12 +139,17 @@
 <details class="tile-menu">
 <summary>Actions</summary>
 <button type="button" class="small-btn" disabled>Done</button>
+{% if step.undo_problems %}
+<button type="button" class="small-btn" disabled>Undo</button>
+<p class="tile-note">{{ step.undo_problems.0 }}</p>
+{% else %}
 <form method="post" action="{% url 'agent_stage_undo' pk=shipment.pk %}">
 {% csrf_token %}
 <input type="hidden" name="container" value="{{ entry.container.pk }}">
 <input type="hidden" name="stage_key" value="{{ step.key }}">
 <button type="submit" class="small-btn">Undo</button>
 </form>
+{% endif %}
 </details>
 {% elif step.key in entry.pending_keys %}
 <p class="tile-prog">Selected, pending</p>

@@ -743,11 +743,11 @@ def dry_run_items(company, user, items):
     Nothing is ever written.
     """
     failures = {}
-    when = timezone.now()
     with transaction.atomic():
         for index, item in enumerate(items):
             ok, message = apply_proposal_item(
-                company, user, item, when, AuditLog.Source.ASSISTANT
+                company, user, item, timezone.now(),
+                AuditLog.Source.ASSISTANT,
             )
             if not ok:
                 failures[index] = message

@@ -959,18 +959,10 @@ def stage_undo(request, pk):
         return redirect('agent_shipment_detail', pk=shipment.pk)
     problems = stage_rules.check_can_undo(container, stage)
     if problems:
-        dependents = stage_rules._completed_dependents(container, stage)
-        if dependents:
-            first = sorted(
-                dependents, key=lambda pair: pair[1].occurred_at
-            )[0][0].label
-            hint = 'Undo %s first.' % first
-        else:
-            hint = ' '.join(problems)
         messages.error(
             request,
             'Cannot undo %s for %s. %s'
-            % (stage.label, container.number, hint),
+            % (stage.label, container.number, problems[0]),
         )
         return redirect('agent_shipment_detail', pk=shipment.pk)
     event = StageEvent.objects.get(container=container, stage=stage)
@@ -1122,6 +1114,13 @@ def shipment_detail(request, pk):
             .values_list('updated_at', flat=True)
             .first()
         )
+        for step in steps:
+            if step['state'] in ('completed', 'current'):
+                step['undo_problems'] = stage_rules.check_can_undo(
+                    container, stages_by_key[step['key']]
+                )
+            else:
+                step['undo_problems'] = []
         entries.append(
             {
                 'container': container,
@@ -1163,7 +1162,10 @@ def shipment_detail(request, pk):
             )
             shipment_steps.append(
                 {'stage': stage, 'state': 'completed',
-                 'occurred_at': latest}
+                 'occurred_at': latest,
+                 'undo_problems': (
+                     stage_rules.check_can_undo_shipment(shipment, stage)
+                 )}
             )
             continue
         lacking = [
@@ -1179,7 +1181,12 @@ def shipment_detail(request, pk):
         else:
             state = 'upcoming'
         shipment_steps.append(
-            {'stage': stage, 'state': state, 'occurred_at': None}
+            {
+                'stage': stage,
+                'state': state,
+                'occurred_at': None,
+                'undo_problems': [],
+            }
         )
     message = 'Track your shipment %s at %s with this code: %s' % (
         shipment.bl_number,
@@ -1660,11 +1667,11 @@ def assistant_confirm(request):
             },
             status=400,
         )
-    now = timezone.now()
     recorded, refused = [], []
     for item in proposal.actions or []:
         _apply_assistant_item(
-            request, request.agent_company, item, now, recorded, refused
+            request, request.agent_company, item, timezone.now(),
+            recorded, refused,
         )
     proposal.status = ProposedAction.Status.CONFIRMED
     proposal.save(update_fields=['status'])

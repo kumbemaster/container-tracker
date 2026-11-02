@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from io import BytesIO, StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
@@ -421,6 +422,33 @@ class NormaliseExtractionTests(TestCase):
                 ],
                 'uncertain': [],
             },
+        )
+
+
+class StageExplanationTextsTests(TestCase):
+    def test_english_texts_match_new_process(self):
+        content = (
+            Path(__file__).parent / 'content'
+            / 'stage_explanations_en.json'
+        ).read_text()
+        texts = json.loads(content)
+        self.assertEqual(
+            texts['paar_assessed'],
+            'Customs assesses your PAAR (Pre-Arrival Assessment Report) '
+            'and works out the duty to pay for your shipment. After this, '
+            'the shipping line and the terminal can start their '
+            'processing, and the duty can be paid.',
+        )
+        self.assertEqual(
+            texts['duty_paid'],
+            'This is when the import duty is paid. After it, customs can '
+            'start its own processing.',
+        )
+        self.assertEqual(
+            texts['customs_processed'],
+            'Customs finishes its processing and releases your cargo. '
+            'This can only happen after the duty is paid, and it must be '
+            'done before the container can leave the port.',
         )
 
 

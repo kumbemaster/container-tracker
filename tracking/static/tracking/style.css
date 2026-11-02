@@ -1276,6 +1276,12 @@ time {
   margin: 0;
 }
 
+.tile-note {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0.25rem 0 0;
+}
+
 .tile-menu summary {
   cursor: pointer;
   min-height: 44px;

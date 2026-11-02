@@ -91,6 +91,12 @@ class Stage(models.Model):
     is_optional = models.BooleanField(default=False)
     is_sequenced = models.BooleanField(default=True)
     is_processing_track = models.BooleanField(default=False)
+    starts_after = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Key of the stage that must be completed first, if any.',
+    )
     phase = models.CharField(
         max_length=20, choices=Phase.choices, default=Phase.ARRIVAL
     )

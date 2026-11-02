@@ -1303,7 +1303,7 @@ class StageUpdateTests(TestCase):
             ).exists()
         )
         self.assertContains(response, 'Recorded Terminal processed')
-        self.assertContains(response, 'Duty paid is not recorded yet.')
+        self.assertContains(response, 'PAAR assessed is not recorded yet.')
         self.assertTrue(
             AuditLog.objects.filter(
                 shipment=self.shipment,
@@ -1407,8 +1407,41 @@ class StageUpdateTests(TestCase):
             stage=self.Stage.objects.get(key='shipping_line_processed'),
             occurred_at=self.now,
         )
+        self.StageEvent.objects.create(
+            container=self.container2,
+            stage=self.Stage.objects.get(key='duty_paid'),
+            occurred_at=self.now,
+        )
         undo_url = (
             '/agent/shipments/%d/shipment-stages/undo/' % self.shipment.pk
+        )
+        # Shipping line work no longer depends on duty paid, so undoing
+        # duty paid while it is done is allowed.
+        response = self.client.post(
+            undo_url, {'stage_key': 'duty_paid'}, follow=True
+        )
+        self.assertContains(response, 'Undid Duty paid for 2 containers.')
+        self.assertFalse(
+            self.StageEvent.objects.filter(
+                stage__key='duty_paid'
+            ).exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                container__isnull=True, action='stage_undone'
+            ).exists()
+        )
+        # Customs work depends on duty paid, so it blocks the undo.
+        for container in (self.container1, self.container2):
+            self.StageEvent.objects.create(
+                container=container,
+                stage=self.Stage.objects.get(key='duty_paid'),
+                occurred_at=self.now,
+            )
+        self.StageEvent.objects.create(
+            container=self.container1,
+            stage=self.Stage.objects.get(key='customs_processed'),
+            occurred_at=self.now,
         )
         response = self.client.post(
             undo_url, {'stage_key': 'duty_paid'}, follow=True
@@ -1416,13 +1449,15 @@ class StageUpdateTests(TestCase):
         self.assertContains(
             response,
             'Cannot undo Duty paid. '
-            'Shipping line processed depends on Duty paid.',
+            'Undo Customs processed first (container UPD1000001).',
         )
-        self.assertTrue(
+        self.assertEqual(
             self.StageEvent.objects.filter(
-                container=self.container1, stage__key='duty_paid'
-            ).exists()
+                stage__key='duty_paid'
+            ).count(),
+            2,
         )
+        # Per-container undo still works for container-scope stages.
         response = self.client.post(
             '/agent/shipments/%d/stages/undo/' % self.shipment.pk,
             {
@@ -1431,7 +1466,9 @@ class StageUpdateTests(TestCase):
             },
             follow=True,
         )
-        self.assertContains(response, 'Undid Shipping line processed')
+        self.assertContains(
+            response, 'Undid Shipping line processed for UPD1000001.'
+        )
         self.assertFalse(
             self.StageEvent.objects.filter(
                 container=self.container1,
@@ -1443,17 +1480,26 @@ class StageUpdateTests(TestCase):
                 container=self.container1, action='stage_undone'
             ).exists()
         )
-        response = self.client.post(
-            undo_url, {'stage_key': 'duty_paid'}, follow=True
+
+    def test_undo_button_disabled_with_reason(self):
+        self.StageEvent.objects.create(
+            container=self.container2,
+            stage=self.Stage.objects.get(key='manifest_available'),
+            occurred_at=self.now,
+        )
+        response = self.client.get(
+            '/agent/shipments/%d/' % self.shipment.pk
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'tile-note')
+        self.assertContains(
+            response,
+            'Undo PAAR assessed first (container UPD1000001).',
         )
         self.assertContains(
             response,
-            'Cannot undo Duty paid. Duty paid is not recorded yet.',
-        )
-        self.assertTrue(
-            self.StageEvent.objects.filter(
-                container=self.container1, stage__key='duty_paid'
-            ).exists()
+            '<input type="hidden" name="stage_key" '
+            'value="arrived_at_port">',
         )
 
     def test_other_company_update_gives_404(self):

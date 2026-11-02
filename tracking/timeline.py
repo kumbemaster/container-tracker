@@ -49,10 +49,7 @@ def build_timeline(container, now=None):
     _moment(now)
     stages = list(Stage.objects.order_by('order'))
     events = {event.stage_id: event for event in _container_events(container)}
-    duty_paid_done = any(
-        event.stage.key == 'duty_paid' and _is_completed(event)
-        for event in events.values()
-    )
+    by_key = {event.stage.key: event for event in events.values()}
     current = current_stage(container)
     current_key = current['key'] if current is not None else None
     steps = []
@@ -75,7 +72,12 @@ def build_timeline(container, now=None):
                     'occurred_at': event.occurred_at,
                 }
             )
-        elif stage.is_processing_track and duty_paid_done:
+        elif (
+            stage.is_processing_track
+            and stage.starts_after
+            and by_key.get(stage.starts_after) is not None
+            and _is_completed(by_key[stage.starts_after])
+        ):
             steps.append(
                 {
                     'key': stage.key,

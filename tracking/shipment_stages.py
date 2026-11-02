@@ -94,11 +94,10 @@ def undo_shipment_stage(shipment, stage, user, source):
     otherwise the first problem sentence is returned and nothing is
     removed. Returns None when undone.
     """
+    problems = stage_rules.check_can_undo_shipment(shipment, stage)
+    if problems:
+        return problems[0]
     containers = list(shipment.containers.order_by('number'))
-    for container in containers:
-        problems = stage_rules.check_can_undo(container, stage)
-        if problems:
-            return problems[0]
     with transaction.atomic():
         StageEvent.objects.filter(
             container__shipment=shipment, stage=stage
