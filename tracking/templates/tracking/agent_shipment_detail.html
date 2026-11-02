@@ -6,22 +6,23 @@
 <main class="wrap agent-wrap">
 <div class="agent-cols">
 <div class="agent-main">
-<div class="card compact">
-<h1 class="mono detail-bl">{{ shipment.bl_number }}</h1>
-<p class="imp-line">{{ shipment.importer.name }}</p>
-<div class="detail-grid">
-<div>
-<p class="mini-label">Access code</p>
-<p><span class="mono" id="copy-code">{{ shipment.importer.access_code }}</span></p>
-<p><button type="button" id="copy-code-btn" class="btn btn-secondary btn-sm">Copy code</button></p>
+<p class="back-link"><a href="{% url 'agent_shipments' %}">&larr; Back to shipments</a></p>
+<div class="card ship-head">
+<div class="ship-head-row">
+<div class="ship-head-main">
+<h1 class="mono ship-bl">{{ shipment.bl_number }}</h1>
+<p class="ship-meta">{{ shipment.importer.name }} &middot; {{ shipment.port }} &rarr; {{ shipment.destination_area }} &middot; {{ entries|length }} containers &middot; {{ header_updated }}</p>
 </div>
-<div>
-<p class="mini-label">Share message</p>
-<p id="copy-msg">{{ message }}</p>
+<div class="ship-head-actions">
+<p class="code-chip"><span class="mini-label">Code</span> <span class="mono code-val" id="copy-code">{{ shipment.importer.access_code }}</span> <button type="button" id="copy-code-btn" class="icon-btn" aria-label="Copy code"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button></p>
 <p><button type="button" id="copy-msg-btn" class="btn btn-secondary btn-sm">Copy message</button></p>
-</div>
-</div>
 <p><a class="btn btn-danger btn-sm" href="{% url 'agent_shipment_delete' pk=shipment.pk %}">Delete</a></p>
+</div>
+</div>
+<details class="msg-preview">
+<summary>Preview message</summary>
+<p id="copy-msg">{{ message }}</p>
+</details>
 </div>
 <div class="card">
 <h2>Update stage</h2>

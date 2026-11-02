@@ -1211,6 +1211,13 @@ def shipment_detail(request, pk):
             'optional_keys': [stage.key for stage in optional_stages],
             'waiting_choices': Container.WaitingOn.choices,
             'history': history,
+            'header_updated': _updated_ago(
+                StageEvent.objects.filter(container__shipment=shipment)
+                .order_by('-updated_at')
+                .values_list('updated_at', flat=True)
+                .first(),
+                now,
+            ),
             'css_version': _css_version(),
         },
     )
@@ -1318,7 +1325,7 @@ def importer_list(request):
                 filter=Q(shipment__deleted_at__isnull=True),
             )
         )
-        .order_by('name')
+        .order_by('-pk')
     )
     total = importers.count()
     if query:

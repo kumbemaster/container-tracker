@@ -3,10 +3,12 @@
 {% block title %}Account{% endblock %}
 
 {% block content %}
-<main class="wrap agent-wrap agent-narrow">
-<div class="card">
+<main class="wrap agent-wrap agent-account">
 <h1>Account</h1>
-<h2>Change password</h2>
+<p class="muted-line">Manage how you sign in and recover your account.</p>
+<div class="acct-grid">
+<div class="card">
+<h2 class="acct-head"><svg class="acct-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.75"/></svg>Change password</h2>
 {% if password_done %}
 <p class="banner success" role="status"><span class="banner-text">Password changed.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
@@ -26,10 +28,11 @@
 </form>
 </div>
 <div class="card">
-<h2>Security question</h2>
+<h2 class="acct-head"><svg class="acct-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>Security question {% if profile %}<span class="pill pill-ok"><span class="dot"></span>Set</span>{% else %}<span class="pill pill-warn"><span class="dot"></span>Not set</span>{% endif %}</h2>
 {% if profile %}
-<p class="help">Current question: {{ profile.question }}</p>
+<p class="acct-question">{{ profile.question }}</p>
 {% endif %}
+<p class="help">Used to reset your password if you forget it.</p>
 {% if question_done %}
 <p class="banner success" role="status"><span class="banner-text">Security question saved.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
@@ -56,6 +59,7 @@
 <p class="help">Choose an answer other people cannot guess from your social media.</p>
 <button type="submit">Save security question</button>
 </form>
+</div>
 </div>
 </main>
 <script>

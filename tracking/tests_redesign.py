@@ -93,8 +93,98 @@ class AgentRedesignTests(TestCase):
         response = self.client.get(
             '/agent/shipments/%d/' % self.shipment.pk
         )
-        self.assertContains(response, 'detail-bl')
-        self.assertContains(response, 'detail-grid')
+        self.assertContains(response, 'ship-head')
+        self.assertContains(response, 'ship-bl')
+        self.assertContains(response, 'Back to shipments')
+
+    def test_detail_header_compact_content(self):
+        html = self.client.get(
+            '/agent/shipments/%d/' % self.shipment.pk
+        ).content.decode()
+        self.assertIn('DESIGNBL001', html)
+        self.assertIn('Design Importer', html)
+        self.assertIn('Onne &rarr; Port Harcourt', html)
+        self.assertIn('1 containers', html)
+        self.assertIn('Never updated', html)
+        self.assertIn('id="copy-code"', html)
+        self.assertIn('aria-label="Copy code"', html)
+        self.assertIn('Copy message', html)
+        self.assertIn('>Delete</a>', html)
+        self.assertIn('<details class="msg-preview">', html)
+        self.assertIn('Preview message', html)
+        self.assertIn('Track your shipment', html)
+
+    def test_account_two_cards(self):
+        from .models import SecurityProfile
+
+        user = User.objects.get(username='design-user')
+        SecurityProfile.objects.create(
+            user=user,
+            question='What was the name of your first school?',
+            answer_hash='x',
+        )
+        html = self.client.get('/agent/account/').content.decode()
+        self.assertIn('acct-grid', html)
+        self.assertIn('Change password', html)
+        self.assertIn('Security question', html)
+        self.assertIn('Set</span>', html)
+        self.assertIn(
+            'What was the name of your first school?', html
+        )
+        self.assertNotIn('answer_hash', html)
+        self.assertIn(
+            'Used to reset your password if you forget it.', html
+        )
+        self.assertEqual(html.count('action="/agent/account/"'), 2)
+        forms = re.findall(
+            r'<form method="post" action="/agent/account/">(.*?)</form>',
+            html,
+            re.S,
+        )
+        self.assertEqual(len(forms), 2)
+        for body in forms:
+            self.assertIn('csrfmiddlewaretoken', body)
+
+    def test_account_not_set_chip(self):
+        html = self.client.get('/agent/account/').content.decode()
+        self.assertIn('Not set</span>', html)
+        self.assertNotIn('Set</span>', html)
+
+    def test_importers_newest_first(self):
+        import re
+
+        Importer.objects.create(
+            agent_company=self.company,
+            name='Alpha Foods',
+            access_code='111111',
+        )
+        Importer.objects.create(
+            agent_company=self.company,
+            name='Zulu Foods',
+            access_code='222222',
+        )
+
+        def names(path):
+            html = self.client.get(path).content.decode()
+            return re.findall(
+                r'<h2 class="imp-name">([^<]+)</h2>', html
+            )
+
+        ordered = names('/agent/importers/')
+        self.assertLess(
+            ordered.index('Zulu Foods'),
+            ordered.index('Alpha Foods'),
+        )
+        filtered = names('/agent/importers/?q=zulu')
+        self.assertEqual(filtered, ['Zulu Foods'])
+        both = names('/agent/importers/?q=foods')
+        self.assertEqual(both, ['Zulu Foods', 'Alpha Foods'])
+
+    def test_notices_name_account_page(self):
+        page = self.client.get('/agent/shipments/').content.decode()
+        self.assertIn('on the Account page', page)
+        signup = self.client.get('/agent/signup/').content.decode()
+        self.assertIn('on the Account page', signup)
 
     def test_reply_panel_wiring(self):
         response = self.client.get('/agent/shipments/')
