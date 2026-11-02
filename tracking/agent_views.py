@@ -42,6 +42,7 @@ from .models import (
     AccessAttempt,
     AgentCompany,
     AuditLog,
+    CompanyEvent,
     Container,
     Document,
     Importer,
@@ -518,6 +519,7 @@ def account(request):
         'tracking/agent_account.html',
         {
             'profile': profile,
+            'is_owner': _is_owner(request.user),
             'password_error': password_error,
             'password_done': password_done,
             'question_error': question_error,
@@ -556,7 +558,7 @@ def shipment_list(request):
             last_update=Max('containers__stageevent__updated_at'),
             is_closed=Case(When(closed_at__isnull=True, then=0), default=1),
         )
-        .order_by('is_closed', F('last_update').asc(nulls_first=True))
+        .order_by('-created_at', '-id')
     )
     if not show_closed:
         shipments = shipments.filter(closed_at__isnull=True)
@@ -586,6 +588,10 @@ def shipment_list(request):
         {
             'rows': rows,
             'show_closed': show_closed,
+            'has_shipments': Shipment.objects.filter(
+                importer__agent_company=request.agent_company,
+                deleted_at__isnull=True,
+            ).exists(),
             'show_security_notice': not SecurityProfile.objects.filter(
                 user=request.user
             ).exists(),
@@ -1266,7 +1272,204 @@ def deleted_list(request):
     return render(
         request,
         'tracking/agent_shipments_deleted.html',
-        {'shipments': shipments, 'css_version': _css_version()},
+        {
+            'shipments': shipments,
+            'is_owner': _is_owner(request.user),
+            'css_version': _css_version(),
+        },
+    )
+
+
+def _is_owner(user):
+    try:
+        return user.staffmember.role == StaffMember.Role.OWNER
+    except (StaffMember.DoesNotExist, AttributeError):
+        return False
+
+
+def _owner_or_forbidden(request):
+    try:
+        role = request.user.staffmember.role
+    except (StaffMember.DoesNotExist, AttributeError):
+        role = None
+    if role != StaffMember.Role.OWNER:
+        return render(
+            request,
+            'tracking/agent_forbidden.html',
+            {'css_version': _css_version()},
+            status=403,
+        )
+    return None
+
+
+def _danger_counts(shipments):
+    shipment_ids = [shipment.pk for shipment in shipments]
+    return {
+        'shipments': len(shipment_ids),
+        'containers': Container.objects.filter(
+            shipment_id__in=shipment_ids
+        ).count(),
+        'importers': Importer.objects.filter(
+            shipment__id__in=shipment_ids
+        ).distinct().count(),
+        'documents': Document.objects.filter(
+            shipment_id__in=shipment_ids
+        ).count(),
+    }
+
+
+@agent_required
+def shipment_clear(request):
+    denied = _owner_or_forbidden(request)
+    if denied is not None:
+        return denied
+    company = request.agent_company
+    key = 'danger-user:%d' % request.user.pk
+    error = None
+    shipments = list(
+        Shipment.objects.filter(
+            importer__agent_company=company, deleted_at__isnull=True
+        ).order_by('pk')
+    )
+    if request.method == 'POST':
+        if access_helpers.is_locked(key):
+            error = LOGIN_LOCKED_MESSAGE
+        elif (request.POST.get('confirm_word') or '') != 'CLEAR':
+            access_helpers.record_failure(key)
+            error = 'Type CLEAR in the box to confirm.'
+        elif not request.user.check_password(
+            request.POST.get('current_password') or ''
+        ):
+            access_helpers.record_failure(key)
+            error = 'The current password is not correct.'
+        else:
+            access_helpers.clear_failures(key)
+            counts = _danger_counts(shipments)
+            counts['documents'] = Document.objects.filter(
+                company=company
+            ).count()
+            now = timezone.now()
+            with transaction.atomic():
+                for shipment in shipments:
+                    shipment.deleted_at = now
+                    shipment.save(update_fields=['deleted_at'])
+                    AuditLog.objects.create(
+                        shipment=shipment,
+                        container=None,
+                        user=request.user,
+                        action='shipment_cleared',
+                        new_value='Cleared in bulk',
+                    )
+                CompanyEvent.objects.create(
+                    company=company,
+                    user=request.user,
+                    action='shipments_cleared',
+                    detail=(
+                        'shipments=%d containers=%d importers=%d '
+                        'documents=%d'
+                        % (
+                            counts['shipments'],
+                            counts['containers'],
+                            counts['importers'],
+                            counts['documents'],
+                        )
+                    ),
+                )
+            messages.success(
+                request,
+                '%d shipments cleared. You can restore them from '
+                'Deleted shipments.' % counts['shipments'],
+            )
+            return redirect('agent_shipments')
+    counts = _danger_counts(shipments)
+    counts['documents'] = Document.objects.filter(
+        company=company
+    ).count()
+    return render(
+        request,
+        'tracking/agent_shipment_clear.html',
+        {
+            'counts': counts,
+            'error': error,
+            'css_version': _css_version(),
+        },
+    )
+
+
+@agent_required
+def shipment_purge(request):
+    denied = _owner_or_forbidden(request)
+    if denied is not None:
+        return denied
+    company = request.agent_company
+    key = 'danger-user:%d' % request.user.pk
+    error = None
+    shipments = list(
+        Shipment.objects.filter(
+            importer__agent_company=company, deleted_at__isnull=False
+        ).order_by('pk')
+    )
+    if request.method == 'POST':
+        if access_helpers.is_locked(key):
+            error = LOGIN_LOCKED_MESSAGE
+        elif (request.POST.get('confirm_word') or '') != 'DELETE FOREVER':
+            access_helpers.record_failure(key)
+            error = 'Type DELETE FOREVER in the box to confirm.'
+        elif not request.user.check_password(
+            request.POST.get('current_password') or ''
+        ):
+            access_helpers.record_failure(key)
+            error = 'The current password is not correct.'
+        else:
+            access_helpers.clear_failures(key)
+            counts = _danger_counts(shipments)
+            shipment_ids = [shipment.pk for shipment in shipments]
+            with transaction.atomic():
+                for document in Document.objects.filter(
+                    shipment_id__in=shipment_ids
+                ):
+                    if document.file:
+                        try:
+                            document.file.delete(save=False)
+                        except OSError:
+                            pass
+                    document.delete()
+                AuditLog.objects.filter(
+                    shipment_id__in=shipment_ids
+                ).delete()
+                Container.objects.filter(
+                    shipment_id__in=shipment_ids
+                ).delete()
+                Shipment.objects.filter(pk__in=shipment_ids).delete()
+                CompanyEvent.objects.create(
+                    company=company,
+                    user=request.user,
+                    action='shipments_purged',
+                    detail=(
+                        'shipments=%d containers=%d importers=%d '
+                        'documents=%d'
+                        % (
+                            counts['shipments'],
+                            counts['containers'],
+                            counts['importers'],
+                            counts['documents'],
+                        )
+                    ),
+                )
+            messages.success(
+                request,
+                '%d deleted shipments permanently removed.'
+                % counts['shipments'],
+            )
+            return redirect('agent_deleted_shipments')
+    return render(
+        request,
+        'tracking/agent_shipment_purge.html',
+        {
+            'counts': _danger_counts(shipments),
+            'error': error,
+            'css_version': _css_version(),
+        },
     )
 
 

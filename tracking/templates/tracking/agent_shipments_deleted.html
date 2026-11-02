@@ -33,6 +33,13 @@
 {% else %}
 <p>No deleted shipments.</p>
 {% endif %}
+{% if is_owner and shipments %}
+<div class="card danger-card">
+<h2>Delete permanently</h2>
+<p>Permanently remove all deleted shipments, their containers, history and scanned documents. This cannot be undone.</p>
+<p><a class="btn btn-danger" href="{% url 'agent_shipment_purge' %}">Delete permanently</a></p>
+</div>
+{% endif %}
 <p><a href="{% url 'agent_shipments' %}">Back to shipments</a></p>
 </div>
 </main>

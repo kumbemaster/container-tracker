@@ -72,6 +72,9 @@
 {% else %}
 <p><a href="{% url 'agent_shipments' %}?show=closed">Show closed shipments</a> · <a href="{% url 'agent_deleted_shipments' %}">Deleted shipments</a></p>
 {% endif %}
+{% if has_shipments %}
+<p><a class="btn-quiet btn-quiet-danger" href="{% url 'agent_shipment_clear' %}">Clear all shipments</a></p>
+{% endif %}
 </div>
 </div>
 <aside class="agent-side">

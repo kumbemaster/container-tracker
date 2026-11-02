@@ -237,6 +237,21 @@ class AuditLog(models.Model):
         return f'{self.action} by {self.user.username}'
 
 
+class CompanyEvent(models.Model):
+    company = models.ForeignKey(
+        AgentCompany, on_delete=models.CASCADE
+    )
+    user = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL
+    )
+    action = models.CharField(max_length=100)
+    detail = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.action} for {self.company.name}'
+
+
 class Document(models.Model):
     class Kind(models.TextChoices):
         BL = 'bl', 'Bill of lading'

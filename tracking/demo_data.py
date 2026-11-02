@@ -54,6 +54,9 @@ def seed_demo_data():
             'terminal_free_days': 3,
         },
     )
+    if shipment1.deleted_at is not None:
+        shipment1.deleted_at = None
+        shipment1.save(update_fields=['deleted_at'])
     shipment1.shipping_line_free_days = 5
     shipment1.terminal_free_days = 3
     shipment1.save(
@@ -114,6 +117,9 @@ def seed_demo_data():
             'destination_area': 'Port Harcourt',
         },
     )
+    if shipment2.deleted_at is not None:
+        shipment2.deleted_at = None
+        shipment2.save(update_fields=['deleted_at'])
     Container.objects.get_or_create(
         shipment=shipment2,
         number='TSTU1234568',

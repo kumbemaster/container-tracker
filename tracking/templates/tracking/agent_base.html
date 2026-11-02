@@ -5,6 +5,9 @@
 <a class="nav-link" href="{% url 'agent_shipments' %}">Shipments</a>
 <a class="nav-link" href="{% url 'agent_importers' %}">Importers</a>
 <a class="nav-link" href="{% url 'agent_account' %}">Account</a>
+{% if agent_company_name %}
+<p class="agent-id"><span class="agent-company" title="{{ agent_company_name }}">{{ agent_company_name }}</span><span class="agent-user">{{ agent_username }}</span></p>
+{% endif %}
 <form class="logout-form" method="post" action="{% url 'agent_logout' %}">
 {% csrf_token %}
 <button type="submit" class="logout-btn">Logout</button>
@@ -13,6 +16,9 @@
 <details class="agent-menu">
 <summary>Menu</summary>
 <div class="agent-menu-body">
+{% if agent_company_name %}
+<p class="agent-id"><span class="agent-company" title="{{ agent_company_name }}">{{ agent_company_name }}</span><span class="agent-user">{{ agent_username }}</span></p>
+{% endif %}
 <a class="nav-link" href="{% url 'agent_shipments' %}">Shipments</a>
 <a class="nav-link" href="{% url 'agent_importers' %}">Importers</a>
 <a class="nav-link" href="{% url 'agent_account' %}">Account</a>

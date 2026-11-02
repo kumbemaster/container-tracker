@@ -1,0 +1,13 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Not allowed{% endblock %}
+
+{% block content %}
+<main class="wrap agent-wrap agent-narrow">
+<div class="card">
+<h1>Not allowed</h1>
+<p>Only the account owner can do that. Ask the owner of your company to do it for you.</p>
+<p><a class="btn btn-secondary" href="{% url 'agent_shipments' %}">Back to shipments</a></p>
+</div>
+</main>
+{% endblock %}

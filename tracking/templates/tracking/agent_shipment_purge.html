@@ -1,0 +1,24 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Delete shipments permanently{% endblock %}
+
+{% block content %}
+<main class="wrap agent-wrap agent-narrow">
+<div class="card">
+<h1>Delete shipments permanently?</h1>
+<p>This permanently removes {{ counts.shipments }} deleted shipments, their containers, history and scanned documents. This cannot be undone.</p>
+{% if error %}
+<p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+<form method="post" action="{% url 'agent_shipment_purge' %}">
+{% csrf_token %}
+<label for="id-confirm-word">Type DELETE FOREVER to confirm</label>
+<input id="id-confirm-word" type="text" name="confirm_word" autocomplete="off" required>
+<label for="id-current-password">Current password</label>
+<input id="id-current-password" type="password" name="current_password" autocomplete="current-password" required>
+<button type="submit" class="btn btn-danger btn-solid">Delete permanently</button>
+</form>
+<p><a class="btn btn-secondary" href="{% url 'agent_deleted_shipments' %}">Cancel</a></p>
+</div>
+</main>
+{% endblock %}

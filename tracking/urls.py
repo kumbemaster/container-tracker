@@ -59,6 +59,16 @@ urlpatterns = [
         name='agent_deleted_shipments',
     ),
     path(
+        'agent/shipments/clear/',
+        agent_views.shipment_clear,
+        name='agent_shipment_clear',
+    ),
+    path(
+        'agent/shipments/purge/',
+        agent_views.shipment_purge,
+        name='agent_shipment_purge',
+    ),
+    path(
         'agent/shipments/<int:pk>/',
         agent_views.shipment_detail,
         name='agent_shipment_detail',

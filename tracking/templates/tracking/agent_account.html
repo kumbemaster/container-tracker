@@ -61,6 +61,13 @@
 </form>
 </div>
 </div>
+{% if is_owner %}
+<div class="card danger-card">
+<h2>Danger zone</h2>
+<p>Remove every shipment from your list and your importers' view, or delete removed shipments forever.</p>
+<p><a class="btn-quiet btn-quiet-danger" href="{% url 'agent_shipment_clear' %}">Clear all shipments</a></p>
+</div>
+{% endif %}
 </main>
 <script>
 (function () {

@@ -1,0 +1,25 @@
+{% extends "tracking/agent_base.html" %}
+
+{% block title %}Clear all shipments{% endblock %}
+
+{% block content %}
+<main class="wrap agent-wrap agent-narrow">
+<div class="card">
+<h1>Clear all shipments?</h1>
+<p>{{ counts.shipments }} shipment{{ counts.shipments|pluralize }}, {{ counts.containers }} container{{ counts.containers|pluralize }}, {{ counts.importers }} importer{{ counts.importers|pluralize }}, {{ counts.documents }} scanned document{{ counts.documents|pluralize }}.</p>
+<p>This removes all {{ counts.shipments }} shipments from your list and from your importers' view. Importers will no longer be able to track them. You can restore them from Deleted shipments until you delete them permanently. Your importers and their access codes are kept.</p>
+{% if error %}
+<p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+{% endif %}
+<form method="post" action="{% url 'agent_shipment_clear' %}">
+{% csrf_token %}
+<label for="id-confirm-word">Type CLEAR to confirm</label>
+<input id="id-confirm-word" type="text" name="confirm_word" autocomplete="off" required>
+<label for="id-current-password">Current password</label>
+<input id="id-current-password" type="password" name="current_password" autocomplete="current-password" required>
+<button type="submit" class="btn btn-danger btn-solid">Clear all shipments</button>
+</form>
+<p><a class="btn btn-secondary" href="{% url 'agent_shipments' %}">Cancel</a></p>
+</div>
+</main>
+{% endblock %}

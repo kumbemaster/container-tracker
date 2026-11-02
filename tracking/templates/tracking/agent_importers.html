@@ -4,9 +4,29 @@
 
 {% block content %}
 <main class="wrap agent-wrap imp-page">
-<div class="card">
-<h1>Importers</h1>
-<p class="imp-total">{{ total }} importer{{ total|pluralize }}</p>
+<div class="imp-toolbar">
+<div class="imp-title-row"><h1>Importers</h1> <span class="pill imp-total">{{ total }} importer{{ total|pluralize }}</span></div>
+<form class="imp-search" method="get" action="{% url 'agent_importers' %}">
+<label for="id-imp-search">Search importers</label>
+<div class="imp-search-box">
+<svg class="imp-search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13.5 13.5L17 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+<input id="id-imp-search" type="search" name="q" value="{{ query }}" placeholder="Type part of a name" autocomplete="off">
+<button type="button" id="imp-search-clear" class="imp-search-x" aria-label="Clear search" hidden>×</button>
+</div>
+</form>
+<details class="imp-add"{% if total == 0 %} open{% endif %}>
+<summary class="btn">Add importer</summary>
+<div class="imp-add-body">
+<form method="post" action="{% url 'agent_importer_add' %}">
+{% csrf_token %}
+<label for="id-importer-name">Importer name</label>
+<div class="imp-add-row">
+<input id="id-importer-name" type="text" name="name" maxlength="200" required>
+<button type="submit" class="btn">Add importer</button>
+</div>
+</form>
+</div>
+</details>
 </div>
 {% if messages or new_importer or rotated_importer %}
 <div class="imp-messages">
@@ -32,34 +52,13 @@
 {% endif %}
 </div>
 {% endif %}
-<div class="card">
-<h2>Add importer</h2>
-<form method="post" action="{% url 'agent_importer_add' %}">
-{% csrf_token %}
-<label for="id-importer-name">Importer name</label>
-<div class="imp-add-row">
-<input id="id-importer-name" type="text" name="name" maxlength="200" required>
-<button type="submit" class="btn">Add importer</button>
-</div>
-</form>
-</div>
-<div class="imp-search-section">
-<form class="imp-search" method="get" action="{% url 'agent_importers' %}">
-<label for="id-imp-search">Search importers</label>
-<div class="imp-search-box">
-<svg class="imp-search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13.5 13.5L17 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-<input id="id-imp-search" type="search" name="q" value="{{ query }}" placeholder="Type part of a name" autocomplete="off">
-<button type="button" id="imp-search-clear" class="imp-search-x" aria-label="Clear search" hidden>×</button>
-</div>
-</form>
-<p class="imp-count" id="imp-count" aria-live="polite">{% if shown == total %}{{ total }} importer{{ total|pluralize }}{% else %}{{ shown }} of {{ total }} importers{% endif %}</p>
+<p class="imp-count" id="imp-count" aria-live="polite"{% if not query %} hidden{% endif %}>{% if shown == total %}{{ total }} importer{{ total|pluralize }}{% else %}{{ shown }} of {{ total }} importers{% endif %}</p>
 {% if query and not importers %}
 <p>No importers match "{{ query }}". <a href="{% url 'agent_importers' %}">Clear search</a></p>
 {% endif %}
 <div id="imp-empty" hidden>
 <p>No importers match "<span id="imp-empty-q"></span>"</p>
 <p><button type="button" class="btn btn-secondary btn-sm" id="imp-empty-clear">Clear search</button></p>
-</div>
 </div>
 <div class="imp-grid" data-total="{{ total }}">
 {% for importer in importers %}
@@ -154,6 +153,7 @@
       if (hit) shown += 1;
     });
     if (searchCount) {
+      searchCount.hidden = !q;
       if (shown === total) {
         searchCount.textContent = total + ' importer' +
           (total === 1 ? '' : 's');

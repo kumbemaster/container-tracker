@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     AgentCompany,
     AuditLog,
+    CompanyEvent,
     Container,
     Document,
     Importer,
@@ -14,6 +15,19 @@ from .models import (
     StageEvent,
     StageExplanation,
 )
+
+
+@admin.register(CompanyEvent)
+class CompanyEventAdmin(admin.ModelAdmin):
+    fields = ('company', 'user', 'action', 'detail', 'created_at')
+    readonly_fields = ('company', 'user', 'action', 'detail', 'created_at')
+    list_display = ('action', 'company', 'user', 'created_at')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(SecurityProfile)
