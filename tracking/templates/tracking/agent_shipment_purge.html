@@ -7,6 +7,25 @@
 <div class="card">
 <h1>Delete shipments permanently?</h1>
 <p>This permanently removes {{ counts.shipments }} deleted shipments, their containers, history and scanned documents. This cannot be undone.</p>
+{% if purgeable %}
+<p>These {{ counts.shipments }} will be removed:</p>
+<ul>
+{% for row in purgeable %}
+<li><span class="mono">{{ row.shipment.bl_number }}</span></li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if staying %}
+<p>These {{ staying|length }} will stay and can be restored:</p>
+<ul>
+{% for row in staying %}
+<li><span class="mono">{{ row.shipment.bl_number }}</span> <span class="muted-line">{{ row.reason }}</span></li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if not purgeable %}
+<p>None of the deleted shipments can be deleted permanently yet.</p>
+{% endif %}
 {% if error %}
 <p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
@@ -16,7 +35,7 @@
 <input id="id-confirm-word" type="text" name="confirm_word" autocomplete="off" required>
 <label for="id-current-password">Current password</label>
 <input id="id-current-password" type="password" name="current_password" autocomplete="current-password" required>
-<button type="submit" class="btn btn-danger btn-solid">Delete permanently</button>
+<button type="submit" class="btn btn-danger btn-solid"{% if not purgeable %} disabled{% endif %}>Delete permanently</button>
 </form>
 <p><a class="btn btn-secondary" href="{% url 'agent_deleted_shipments' %}">Cancel</a></p>
 </div>

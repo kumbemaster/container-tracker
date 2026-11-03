@@ -1478,12 +1478,15 @@ def shipment_purge(request):
             importer__agent_company=company, deleted_at__isnull=False
         ).order_by('pk')
     )
-    shipments = [
-        shipment
-        for shipment in deleted
-        if shipment_stages.is_purgeable(shipment)[0]
-    ]
-    skipped = len(deleted) - len(shipments)
+    rows = []
+    for shipment in deleted:
+        purgeable, reason = shipment_stages.is_purgeable(shipment)
+        rows.append(
+            {'shipment': shipment, 'purgeable': purgeable, 'reason': reason}
+        )
+    shipments = [row['shipment'] for row in rows if row['purgeable']]
+    staying = [row for row in rows if not row['purgeable']]
+    skipped = len(staying)
     if request.method == 'POST':
         if access_helpers.is_locked(key):
             error = LOGIN_LOCKED_MESSAGE
@@ -1533,22 +1536,39 @@ def shipment_purge(request):
                         )
                     ),
                 )
-            message = (
-                '%d deleted shipments permanently removed.'
-                % counts['shipments']
-            )
-            if counts['skipped']:
-                message += (
-                    ' %d left in Deleted shipments.'
-                    % counts['skipped']
+            removed = counts['shipments']
+            if removed:
+                message = (
+                    '%d shipments permanently deleted.' % removed
                 )
-            messages.success(request, message)
+                if counts['skipped']:
+                    message += (
+                        ' %d kept because they are not finished.'
+                        % counts['skipped']
+                    )
+                messages.success(request, message)
+            else:
+                if counts['skipped']:
+                    message = (
+                        '0 shipments permanently deleted. '
+                        '%d kept because they are not finished.'
+                        % counts['skipped']
+                    )
+                else:
+                    message = '0 shipments permanently deleted.'
+                messages.warning(request, message)
             return redirect('agent_deleted_shipments')
     return render(
         request,
         'tracking/agent_shipment_purge.html',
         {
             'counts': _danger_counts(shipments),
+            'purgeable': [
+                {'shipment': row['shipment']}
+                for row in rows
+                if row['purgeable']
+            ],
+            'staying': staying,
             'error': error,
             'css_version': _css_version(),
         },
