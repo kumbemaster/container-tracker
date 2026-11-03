@@ -2287,15 +2287,15 @@ class DangerZoneTests(TestCase):
                 follow=True,
             )
             self.assertContains(
-                response, '1 shipments permanently deleted.'
+                response, '2 shipments permanently deleted.'
             )
-            self.assertContains(
-                response, '1 kept because they are not finished.'
+            self.assertNotContains(
+                response, 'kept because they are not finished.'
             )
-            self.assertTrue(
+            self.assertFalse(
                 Shipment.objects.filter(pk=gone.pk).exists()
             )
-            self.assertTrue(
+            self.assertFalse(
                 StageEvent.objects.filter(pk=event.pk).exists()
             )
             self.assertFalse(
@@ -2324,8 +2324,8 @@ class DangerZoneTests(TestCase):
             event = CompanyEvent.objects.get(
                 company=company, action='shipments_purged'
             )
-            self.assertIn('shipments=1', event.detail)
-            self.assertIn('skipped=1', event.detail)
+            self.assertIn('shipments=2', event.detail)
+            self.assertIn('skipped=0', event.detail)
             importer.refresh_from_db()
             self.assertEqual(importer.access_code, '482910')
 
@@ -2398,7 +2398,7 @@ class DangerZoneTests(TestCase):
         self.assertContains(response, 'not correct')
         self.assertTrue(Shipment.objects.filter(pk=gone.pk).exists())
 
-    def test_purge_nothing_purgeable_warns_and_keeps_all(self):
+    def test_purge_deletes_unfinished_shipment(self):
         company = self._company('Purge None Co')
         owner = self._user(company, 'purge-none-owner')
         importer = self._importer(company)
@@ -2414,18 +2414,8 @@ class DangerZoneTests(TestCase):
         midway.save(update_fields=['deleted_at'])
         self.client.force_login(owner)
         response = self.client.get('/agent/shipments/purge/')
-        self.assertContains(
-            response,
-            'None of the deleted shipments can be deleted '
-            'permanently yet.',
-        )
-        self.assertContains(response, 'disabled')
         self.assertContains(response, 'NONEBL001')
-        self.assertContains(
-            response,
-            'Steps have been recorded but the shipment is not '
-            'finished.',
-        )
+        self.assertNotContains(response, 'disabled')
         response = self.client.post(
             '/agent/shipments/purge/',
             {
@@ -2435,20 +2425,20 @@ class DangerZoneTests(TestCase):
             follow=True,
         )
         self.assertContains(
-            response,
-            '0 shipments permanently deleted. '
-            '1 kept because they are not finished.',
+            response, '1 shipments permanently deleted.'
         )
-        self.assertContains(response, 'banner warning')
-        self.assertNotContains(response, 'banner success')
-        self.assertTrue(
+        self.assertNotContains(
+            response, 'kept because they are not finished.'
+        )
+        self.assertContains(response, 'banner success')
+        self.assertFalse(
             Shipment.objects.filter(pk=midway.pk).exists()
         )
         event = CompanyEvent.objects.get(
             company=company, action='shipments_purged'
         )
-        self.assertIn('shipments=0', event.detail)
-        self.assertIn('skipped=1', event.detail)
+        self.assertIn('shipments=1', event.detail)
+        self.assertIn('skipped=0', event.detail)
 
     def test_purge_page_lists_rows_and_spares_other_company(self):
         company = self._company('Purge List Co')
@@ -2477,11 +2467,6 @@ class DangerZoneTests(TestCase):
         response = self.client.get('/agent/shipments/purge/')
         self.assertContains(response, 'LISTBL001')
         self.assertContains(response, 'LISTBL002')
-        self.assertContains(
-            response,
-            'Steps have been recorded but the shipment is not '
-            'finished.',
-        )
         self.assertNotContains(response, 'OTHERBL001')
         response = self.client.post(
             '/agent/shipments/purge/',
@@ -2492,15 +2477,15 @@ class DangerZoneTests(TestCase):
             follow=True,
         )
         self.assertContains(
-            response, '1 shipments permanently deleted.'
+            response, '2 shipments permanently deleted.'
         )
-        self.assertContains(
-            response, '1 kept because they are not finished.'
+        self.assertNotContains(
+            response, 'kept because they are not finished.'
         )
         self.assertFalse(
             Shipment.objects.filter(pk=fresh.pk).exists()
         )
-        self.assertTrue(
+        self.assertFalse(
             Shipment.objects.filter(pk=midway.pk).exists()
         )
         self.assertTrue(
@@ -2586,79 +2571,7 @@ class DangerZoneTests(TestCase):
         html = self.client.get('/agent/importers/').content.decode()
         self.assertIn('class="imp-add" open', html)
 
-    def test_is_purgeable_matrix(self):
-        company = self._company('Purgeable Co')
-        self._user(company, 'purgeable-owner')
-        importer = self._importer(company)
-        active, _ = self._shipment(importer, 'ACTBL001', 'ACT000001')
-        self.assertEqual(
-            shipment_stages.is_purgeable(active),
-            (False, 'The shipment has not been deleted yet.'),
-        )
-        fresh, _ = self._shipment(importer, 'FRESHBL001', 'FRESH000001')
-        fresh.deleted_at = timezone.now()
-        fresh.save(update_fields=['deleted_at'])
-        self.assertEqual(
-            shipment_stages.is_purgeable(fresh), (True, '')
-        )
-        midway, midway_container = self._shipment(
-            importer, 'MIDBL001', 'MID000001'
-        )
-        StageEvent.objects.create(
-            container=midway_container,
-            stage=Stage.objects.get(key='arrived_at_port'),
-            occurred_at=timezone.now(),
-        )
-        midway.deleted_at = timezone.now()
-        midway.save(update_fields=['deleted_at'])
-        self.assertEqual(
-            shipment_stages.is_purgeable(midway),
-            (
-                False,
-                'Steps have been recorded but the shipment is not '
-                'finished.',
-            ),
-        )
-        done, done_container = self._shipment(
-            importer, 'DONEBL001', 'DONE000001'
-        )
-        StageEvent.objects.create(
-            container=done_container,
-            stage=Stage.objects.get(key='empty_container_returned'),
-            occurred_at=timezone.now(),
-        )
-        done.deleted_at = timezone.now()
-        done.save(update_fields=['deleted_at'])
-        self.assertEqual(
-            shipment_stages.is_purgeable(done), (True, '')
-        )
-        partial, partial_container = self._shipment(
-            importer, 'PARTBL001', 'PART000001'
-        )
-        other_container = Container.objects.create(
-            shipment=partial, number='PART000002', size='20ft'
-        )
-        StageEvent.objects.create(
-            container=partial_container,
-            stage=Stage.objects.get(key='empty_container_returned'),
-            occurred_at=timezone.now(),
-        )
-        StageEvent.objects.create(
-            container=other_container,
-            stage=Stage.objects.get(key='arrived_at_port'),
-            occurred_at=timezone.now(),
-        )
-        partial.deleted_at = timezone.now()
-        partial.save(update_fields=['deleted_at'])
-        self.assertEqual(
-            shipment_stages.is_purgeable(partial),
-            (
-                False,
-                'The empty container has not been returned yet.',
-            ),
-        )
-
-    def test_deleted_rows_show_purge_status(self):
+    def test_deleted_rows_list_shipments_without_status(self):
         company = self._company('Row Status Co')
         owner = self._user(company, 'row-owner')
         importer = self._importer(company)
@@ -2676,16 +2589,13 @@ class DangerZoneTests(TestCase):
             shipment.save(update_fields=['deleted_at'])
         self.client.force_login(owner)
         response = self.client.get('/agent/shipments/deleted/')
-        self.assertContains(response, 'Can be deleted permanently')
-        self.assertContains(
-            response,
-            'Steps have been recorded but the shipment is not finished.',
+        self.assertContains(response, 'ROWBL001')
+        self.assertContains(response, 'ROWBL002')
+        self.assertNotContains(response, 'Can be deleted permanently')
+        self.assertNotContains(
+            response, 'Steps have been recorded but the shipment is not'
         )
-        self.assertContains(
-            response,
-            '1 of 2 deleted shipments can be deleted permanently. '
-            'The others stay here and can be restored.',
-        )
+        self.assertContains(response, 'Delete permanently')
 
     def test_clear_with_code_reset(self):
         company = self._company('Reset Co')

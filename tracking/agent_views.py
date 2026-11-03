@@ -1310,22 +1310,11 @@ def deleted_list(request):
         .prefetch_related('containers')
         .order_by('-deleted_at')
     )
-    rows = []
-    for shipment in shipments:
-        purgeable, reason = shipment_stages.is_purgeable(shipment)
-        rows.append(
-            {
-                'shipment': shipment,
-                'purgeable': purgeable,
-                'purge_reason': reason,
-            }
-        )
     return render(
         request,
         'tracking/agent_shipments_deleted.html',
         {
-            'rows': rows,
-            'purgeable_count': sum(1 for row in rows if row['purgeable']),
+            'shipments': list(shipments),
             'is_owner': _is_owner(request.user),
             'css_version': _css_version(),
         },
@@ -1473,20 +1462,11 @@ def shipment_purge(request):
     company = request.agent_company
     key = 'danger-user:%d' % request.user.pk
     error = None
-    deleted = list(
+    shipments = list(
         Shipment.objects.filter(
             importer__agent_company=company, deleted_at__isnull=False
         ).order_by('pk')
     )
-    rows = []
-    for shipment in deleted:
-        purgeable, reason = shipment_stages.is_purgeable(shipment)
-        rows.append(
-            {'shipment': shipment, 'purgeable': purgeable, 'reason': reason}
-        )
-    shipments = [row['shipment'] for row in rows if row['purgeable']]
-    staying = [row for row in rows if not row['purgeable']]
-    skipped = len(staying)
     if request.method == 'POST':
         if access_helpers.is_locked(key):
             error = LOGIN_LOCKED_MESSAGE
@@ -1501,7 +1481,7 @@ def shipment_purge(request):
         else:
             access_helpers.clear_failures(key)
             counts = _danger_counts(shipments)
-            counts['skipped'] = skipped
+            counts['skipped'] = 0
             shipment_ids = [shipment.pk for shipment in shipments]
             with transaction.atomic():
                 for document in Document.objects.filter(
@@ -1538,37 +1518,22 @@ def shipment_purge(request):
                 )
             removed = counts['shipments']
             if removed:
-                message = (
-                    '%d shipments permanently deleted.' % removed
+                messages.success(
+                    request,
+                    '%d shipments permanently deleted.' % removed,
                 )
-                if counts['skipped']:
-                    message += (
-                        ' %d kept because they are not finished.'
-                        % counts['skipped']
-                    )
-                messages.success(request, message)
             else:
-                if counts['skipped']:
-                    message = (
-                        '0 shipments permanently deleted. '
-                        '%d kept because they are not finished.'
-                        % counts['skipped']
-                    )
-                else:
-                    message = '0 shipments permanently deleted.'
-                messages.warning(request, message)
+                messages.warning(
+                    request, '0 shipments permanently deleted.'
+                )
             return redirect('agent_deleted_shipments')
     return render(
         request,
         'tracking/agent_shipment_purge.html',
         {
             'counts': _danger_counts(shipments),
-            'purgeable': [
-                {'shipment': row['shipment']}
-                for row in rows
-                if row['purgeable']
-            ],
-            'staying': staying,
+            'purgeable': [{'shipment': shipment} for shipment in shipments],
+            'staying': [],
             'error': error,
             'css_version': _css_version(),
         },

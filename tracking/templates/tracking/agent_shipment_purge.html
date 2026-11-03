@@ -15,16 +15,8 @@
 {% endfor %}
 </ul>
 {% endif %}
-{% if staying %}
-<p>These {{ staying|length }} will stay and can be restored:</p>
-<ul>
-{% for row in staying %}
-<li><span class="mono">{{ row.shipment.bl_number }}</span> <span class="muted-line">{{ row.reason }}</span></li>
-{% endfor %}
-</ul>
-{% endif %}
 {% if not purgeable %}
-<p>None of the deleted shipments can be deleted permanently yet.</p>
+<p>There are no deleted shipments to remove.</p>
 {% endif %}
 {% if error %}
 <p class="banner error" role="status"><span class="banner-text">{{ error }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
