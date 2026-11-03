@@ -2,11 +2,14 @@
 
 {% block title %}Agent login{% endblock %}
 
+{% block nav %}<a class="btn btn-secondary btn-sm" href="{% url 'search' %}">← Back to tracking</a>{% endblock %}
+
 {% block content %}
-<main class="wrap agent-wrap agent-narrow">
-<div class="card">
-<p><a class="btn btn-secondary" href="{% url 'search' %}">← Back to tracking</a></p>
+<main class="wrap agent-wrap agent-narrow auth-page">
+<div class="card auth-card">
+<div class="auth-head">
 <h1>Agent login</h1>
+</div>
 {% if form.non_field_errors %}
 <p class="banner error" role="status"><span class="banner-text">{{ form.non_field_errors }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}

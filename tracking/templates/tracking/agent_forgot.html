@@ -2,10 +2,11 @@
 
 {% block title %}Forgot password{% endblock %}
 
+{% block nav %}<a class="btn btn-secondary btn-sm" href="{% url 'search' %}">← Back to tracking</a>{% endblock %}
+
 {% block content %}
 <main class="wrap agent-wrap agent-narrow">
 <div class="card">
-<p><a class="btn btn-secondary" href="{% url 'search' %}">← Back to tracking</a></p>
 <h1>Forgot password?</h1>
 <p class="help">Enter your username. If your account has a security question, you can set a new password.</p>
 {% if error %}

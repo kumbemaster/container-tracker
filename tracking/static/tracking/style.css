@@ -1374,6 +1374,26 @@ importer pages keep their exact look. */
   margin-right: auto;
 }
 
+.auth-page {
+  padding-top: 16px;
+}
+
+.auth-card {
+  padding-top: 20px;
+}
+
+.auth-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+  margin: 0 0 1.1rem;
+}
+
+.auth-head h1 {
+  margin: 0;
+}
+
 .agent-account {
   max-width: 1100px;
   margin-left: auto;
