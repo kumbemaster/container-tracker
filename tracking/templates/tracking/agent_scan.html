@@ -18,20 +18,14 @@
 {% csrf_token %}
 <p><label for="id-scan">Bill of lading (JPEG, PNG or PDF, up to 4 MB)</label>
 <input id="id-scan" type="file" name="scan" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" required></p>
-<p class="help">Accepted: JPEG, PNG or PDF, up to 4 MB. Scans are read by an AI model. Check every field before saving.</p>
-<p class="banner error" id="scan-size-error" role="status" hidden><span class="banner-text">That file is larger than 4 MB. Please upload a smaller file.</span></p>
 <button type="submit">Scan</button>
 </form>
 <script>
 (function () {
   var form = document.getElementById('scan-form');
   var field = document.getElementById('id-scan');
-  var sizeError = document.getElementById('scan-size-error');
   if (!form || !field) return;
   var submitting = false;
-  function showTooLarge() {
-    if (sizeError) sizeError.hidden = false;
-  }
   function shrink(file, done) {
     var url = URL.createObjectURL(file);
     var image = new Image();
@@ -67,12 +61,7 @@
     if (!file) return;
     if (!/^image\/(jpeg|png)$/.test(file.type)) return;
     event.preventDefault();
-    if (sizeError) sizeError.hidden = true;
     shrink(file, function (ready) {
-      if (ready.size > 4194304) {
-        showTooLarge();
-        return;
-      }
       if (ready !== file) {
         var transfer = new DataTransfer();
         transfer.items.add(ready);

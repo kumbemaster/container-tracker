@@ -1345,12 +1345,8 @@ class PdfFlowTests(TestCase):
             'image/jpeg,image/png,application/pdf"',
             html,
         )
-        self.assertIn(
-            'Accepted: JPEG, PNG or PDF, up to 4 MB. '
-            'Scans are read by an AI model. '
-            'Check every field before saving.',
-            html,
-        )
+        self.assertNotIn('Accepted: JPEG, PNG or PDF', html)
+        self.assertNotIn('scan-size-error', html)
         self.assertIn('toBlob', html)
         self.assertIn('2400', html)
 
