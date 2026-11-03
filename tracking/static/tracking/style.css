@@ -81,11 +81,16 @@ input:focus-visible {
 .wordmark {
   color: var(--ink);
   font-weight: 700;
+  font-size: 20px;
   text-decoration: none;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
   margin-right: auto;
+}
+
+.wordmark-two {
+  color: var(--brand);
 }
 
 .plain-link {

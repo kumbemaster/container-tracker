@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>{% block title %}Container tracking{% endblock %}</title>
+<title>{% block title %}Track a shipment{% endblock %} · Port-2-Door</title>
 {% load static %}
 <link rel="stylesheet" href="{% static 'tracking/style.css' %}?v={{ css_version }}">
 </head>
 <body>
 <header class="sitebar">
-<a class="wordmark" href="{% url 'search' %}">Container Tracker</a>
+<a class="wordmark" href="{% url 'search' %}" aria-label="Port-2-Door home">Port-<span class="wordmark-two">2</span>-Door</a>
 {% block topsearch %}{% endblock %}
 {% block langswitch %}{% endblock %}
 <nav class="sitenav">{% block nav %}{% endblock %}</nav>

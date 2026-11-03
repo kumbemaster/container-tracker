@@ -8,7 +8,7 @@
 <h1>New shipment</h1>
 <p><a class="btn btn-quiet" href="{% url 'agent_shipment_scan' %}">Scan a BL</a></p>
 {% if prefill %}
-<p class="scan-banner banner" role="status" data-transient><span class="banner-text">Prefilled from your scan. Nothing is saved until you submit.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+<p class="scan-banner banner" role="status" data-transient><span class="banner-text">{% if pages_total > pages_read %}Only the first {{ pages_read }} of {{ pages_total }} pages were read. {% endif %}Prefilled from your scan. Nothing is saved until you submit.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
 {% if form.non_field_errors %}
 <p class="banner error" role="status"><span class="banner-text">{{ form.non_field_errors }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>

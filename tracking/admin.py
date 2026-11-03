@@ -1,5 +1,9 @@
 from django.contrib import admin
 
+admin.site.site_header = 'Port-2-Door administration'
+admin.site.site_title = 'Port-2-Door'
+admin.site.index_title = 'Port-2-Door'
+
 from .models import (
     AgentCompany,
     AuditLog,

@@ -14,12 +14,76 @@
 <p class="banner error" role="status"><span class="banner-text">We could not read this document. You can enter the shipment manually.</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 <p><a href="{% url 'agent_shipment_new' %}">Enter the shipment manually</a></p>
 {% endif %}
-<form method="post" action="{% url 'agent_shipment_scan' %}" enctype="multipart/form-data">
+<form method="post" action="{% url 'agent_shipment_scan' %}" enctype="multipart/form-data" id="scan-form">
 {% csrf_token %}
-<p><label for="id-scan">Bill of lading image (JPEG or PNG, up to 8 MB)</label>
-<input id="id-scan" type="file" name="scan" accept="image/jpeg,image/png" required></p>
+<p><label for="id-scan">Bill of lading (JPEG, PNG or PDF, up to 4 MB)</label>
+<input id="id-scan" type="file" name="scan" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" required></p>
+<p class="help">Accepted: JPEG, PNG or PDF, up to 4 MB. Scans are read by an AI model. Check every field before saving.</p>
+<p class="banner error" id="scan-size-error" role="status" hidden><span class="banner-text">That file is larger than 4 MB. Please upload a smaller file.</span></p>
 <button type="submit">Scan</button>
 </form>
+<script>
+(function () {
+  var form = document.getElementById('scan-form');
+  var field = document.getElementById('id-scan');
+  var sizeError = document.getElementById('scan-size-error');
+  if (!form || !field) return;
+  var submitting = false;
+  function showTooLarge() {
+    if (sizeError) sizeError.hidden = false;
+  }
+  function shrink(file, done) {
+    var url = URL.createObjectURL(file);
+    var image = new Image();
+    image.onload = function () {
+      URL.revokeObjectURL(url);
+      var longest = Math.max(image.naturalWidth, image.naturalHeight);
+      if (file.size <= 3670016 && longest <= 3000) {
+        done(file);
+        return;
+      }
+      var scale = Math.min(1, 2400 / longest);
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.round(image.naturalWidth * scale);
+      canvas.height = Math.round(image.naturalHeight * scale);
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (!blob) {
+          done(file);
+          return;
+        }
+        done(new File([blob], file.name.replace(/\.[^.]*$/, '.jpg'), {type: 'image/jpeg'}));
+      }, 'image/jpeg', 0.85);
+    };
+    image.onerror = function () {
+      URL.revokeObjectURL(url);
+      done(file);
+    };
+    image.src = url;
+  }
+  form.addEventListener('submit', function (event) {
+    if (submitting) return;
+    var file = field.files && field.files[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png)$/.test(file.type)) return;
+    event.preventDefault();
+    if (sizeError) sizeError.hidden = true;
+    shrink(file, function (ready) {
+      if (ready.size > 4194304) {
+        showTooLarge();
+        return;
+      }
+      if (ready !== file) {
+        var transfer = new DataTransfer();
+        transfer.items.add(ready);
+        field.files = transfer.files;
+      }
+      submitting = true;
+      form.submit();
+    });
+  });
+})();
+</script>
 </div>
 </main>
 {% endblock %}

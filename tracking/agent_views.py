@@ -36,6 +36,7 @@ from . import timeline as timeline_helpers
 from .ai.assistant import HISTORY_LIMIT, run_assistant
 from .ai import assistant_tools
 from .ai.extract_bl import extract_shipment
+from .ai.pdfs import PROTECTED_PDF_MESSAGE, PdfError
 from .ai.transcribe import transcribe_audio
 from .forms import ShipmentForm, normalise_number
 from .models import (
@@ -734,6 +735,8 @@ def _apply_scan_prefill(request, company, form, context):
             'importer_missing': not (
                 result.get('importer_name') or ''
             ).strip(),
+            'pages_total': result.get('pages_total') or 1,
+            'pages_read': result.get('pages_read') or 1,
         }
     )
 
@@ -763,6 +766,8 @@ def _restore_scan_context(request, company, form, context):
             'importer_missing': not (
                 result.get('importer_name') or ''
             ).strip(),
+            'pages_total': result.get('pages_total') or 1,
+            'pages_read': result.get('pages_read') or 1,
         }
     )
 
@@ -1642,25 +1647,34 @@ def importer_rotate(request, pk):
     )
 
 
-SCAN_MAX_BYTES = 8 * 1024 * 1024
+SCAN_MAX_BYTES = 4 * 1024 * 1024
 SCAN_DAILY_LIMIT = 50
-SCAN_CONTENT_TYPES = {'image/jpeg', 'image/png'}
 _JPEG_SIG = b'\xff\xd8\xff'
 _PNG_SIG = b'\x89PNG\r\n\x1a\n'
+_PDF_SIG = b'%PDF-'
+
+
+def _scan_upload_kind(data):
+    """JPEG, PNG or PDF by file signature, else None."""
+    if data[:3] == _JPEG_SIG:
+        return 'jpeg'
+    if data[:8] == _PNG_SIG:
+        return 'png'
+    if _PDF_SIG in bytes(data[:1024]):
+        return 'pdf'
+    return None
 
 
 def _scan_upload_error(upload):
-    """Check the content type, size and file signature of a scan upload."""
+    """Check the size and file signature of a scan upload."""
     if upload is None:
-        return 'Choose a JPEG or PNG file to scan.'
-    if upload.content_type not in SCAN_CONTENT_TYPES:
-        return 'Only JPEG or PNG files can be scanned.'
+        return 'Please upload a JPEG, PNG or PDF.'
     if upload.size > SCAN_MAX_BYTES:
-        return 'The file must be 8 MB or smaller.'
-    head = upload.read(8)
+        return 'That file is larger than 4 MB. Please upload a smaller file.'
+    head = upload.read(1024)
     upload.seek(0)
-    if head[:3] != _JPEG_SIG and head != _PNG_SIG:
-        return 'Only JPEG or PNG files can be scanned.'
+    if _scan_upload_kind(head) is None:
+        return 'Please upload a JPEG, PNG or PDF.'
     return None
 
 
@@ -1691,12 +1705,29 @@ def shipment_scan(request):
             uploaded_by=request.user,
             kind=Document.Kind.BL,
         )
-        extension = '.png' if data[:4] == _PNG_SIG[:4] else '.jpg'
+        kind = _scan_upload_kind(data)
+        extension = {'png': '.png', 'pdf': '.pdf'}.get(kind, '.jpg')
         document.file.save(
             'scan-%d%s' % (document.pk, extension), ContentFile(data)
         )
         try:
             result = extract_shipment(data)
+        except PdfError as exc:
+            logger.warning('bl scan failed document=%d', document.pk)
+            if str(exc) == PROTECTED_PDF_MESSAGE:
+                return render(
+                    request,
+                    'tracking/agent_scan.html',
+                    {
+                        'error': PROTECTED_PDF_MESSAGE,
+                        'css_version': _css_version(),
+                    },
+                )
+            return render(
+                request,
+                'tracking/agent_scan.html',
+                {'scan_failed': True, 'css_version': _css_version()},
+            )
         except Exception:
             logger.warning('bl scan failed document=%d', document.pk)
             return render(
