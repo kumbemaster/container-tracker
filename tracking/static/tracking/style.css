@@ -1457,6 +1457,19 @@ importer pages keep their exact look. */
   background: #a86400;
 }
 
+.agent-wrap .digit-note {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7a4d00;
+  background: #fff4e0;
+  border: 1px solid #a86400;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+
 /* Button system */
 
 .agent-wrap .btn {

@@ -299,7 +299,7 @@ class AgentTests(TestCase):
         self.assertNotContains(response, 'free_days')
         self.assertNotContains(response, 'Free time')
 
-    def test_invalid_check_digit_creates_nothing(self):
+    def test_invalid_check_digit_needs_confirmation(self):
         company = self._company('Invalid Co')
         user = self._agent(company, 'invalid-creator')
         importer = self._importer(company)
@@ -311,9 +311,33 @@ class AgentTests(TestCase):
             c_size=['40ft'],
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'not a valid container number')
+        self.assertContains(
+            response, 'does not pass the container check digit'
+        )
         self.assertContains(response, 'CSQU3054384')
+        self.assertContains(
+            response,
+            'I have checked this number against the document and it '
+            'is correct as written.',
+        )
         self.assertFalse(Shipment.objects.filter(bl_number='BADBL001').exists())
+        response = self._new_shipment_post(
+            importer_name=importer.name,
+            bl_number='BADBL001',
+            c_number=['CSQU3054384'],
+            c_size=['40ft'],
+            c_confirm=['0'],
+        )
+        self.assertEqual(response.status_code, 302)
+        container = Container.objects.get(number='CSQU3054384')
+        self.assertTrue(container.check_digit_confirmed)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                container=container,
+                action='container_created',
+                new_value__contains='does not match',
+            ).exists()
+        )
 
     def test_duplicate_container_number_creates_nothing(self):
         company = self._company('Duplicate Co')

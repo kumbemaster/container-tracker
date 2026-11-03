@@ -107,6 +107,7 @@
 <span class="abox-main">
 <span class="mono abox-number">{{ entry.container.number }}</span>
 <span class="abox-size">{{ entry.container.size }}</span>
+{% if entry.container.check_digit_confirmed %}<span class="digit-note">Check digit does not match</span>{% endif %}
 </span>
 <span class="abox-state">
 <span class="mini-label">Current state</span>

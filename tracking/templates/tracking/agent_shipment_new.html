@@ -44,6 +44,10 @@
 {% if row.check %}
 <p class="check-note">Check this</p>
 {% endif %}
+{% if row.check_digit_failed %}
+<p class="help check-hint">{{ row.check_digit_hint }}</p>
+<p class="confirm-box"><label><input type="checkbox" name="c_confirm" value="{{ forloop.counter0 }}"{% if row.confirmed %} checked{% endif %}> I have checked this number against the document and it is correct as written.</label></p>
+{% endif %}
 {% if row.errors %}
 <ul class="row-errors">
 {% for row_error in row.errors %}
@@ -85,6 +89,9 @@
     copy.classList.remove('check-row');
     var note = copy.querySelector('.check-note');
     if (note) note.remove();
+    copy.querySelectorAll('.check-hint,.confirm-box').forEach(function (el) {
+      el.remove();
+    });
     nextId += 1;
     rows.appendChild(copy);
     refreshRemove();

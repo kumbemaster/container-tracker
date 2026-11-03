@@ -61,6 +61,7 @@ class Container(models.Model):
     )
     number = models.CharField(max_length=50, db_index=True)
     size = models.CharField(max_length=10)
+    check_digit_confirmed = models.BooleanField(default=False)
     waiting_on = models.CharField(
         max_length=20, choices=WaitingOn.choices, default=WaitingOn.NOBODY
     )

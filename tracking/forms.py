@@ -3,7 +3,11 @@ import re
 from django import forms
 
 from .models import Importer, Shipment
-from .validators import is_valid_container_number
+from .validators import (
+    expected_check_digit,
+    has_container_format,
+    is_valid_container_number,
+)
 
 CONTAINER_SIZES = ['20ft', '40ft', '40HC']
 
@@ -102,20 +106,38 @@ class ShipmentForm(forms.Form):
             raise forms.ValidationError('Add at least one container.')
         seen = set()
         failed = False
-        for row in filled:
+        confirmed = set(self.data.getlist('c_confirm'))
+        for index, row in enumerate(rows):
             number = normalise_number(row['number'])
             size = (row['size'] or '').strip()
             row['number'] = row['number'] or ''
+            row['check_digit_failed'] = False
+            row['confirmed'] = str(index) in confirmed
+            if not (row['number'] or '').strip() and not size:
+                continue
             if not number:
                 row['errors'].append('Enter a container number.')
                 failed = True
                 continue
-            if not is_valid_container_number(number):
+            if not has_container_format(number):
                 row['errors'].append(
                     '%s is not a valid container number.' % number
                 )
                 failed = True
                 continue
+            if not is_valid_container_number(number):
+                expected = expected_check_digit(number[:10])
+                row['check_digit_failed'] = True
+                row['check'] = True
+                row['check_digit_hint'] = (
+                    '%s does not pass the container check digit. '
+                    'If the first ten characters are right, the last '
+                    'digit would be %s. Please check it against the '
+                    'document.' % (number, expected)
+                )
+                if not row['confirmed']:
+                    failed = True
+                    continue
             if number in seen:
                 row['errors'].append(
                     'Duplicate container number %s.' % number
@@ -134,12 +156,26 @@ class ShipmentForm(forms.Form):
             raise forms.ValidationError(
                 'Fix the container rows below.'
             )
-        return [
-            {'number': row['number'], 'size': row['size'], 'errors': []}
+        self.rows = [
+            {
+                'number': row['number'],
+                'size': row['size'],
+                'errors': [],
+                'confirmed': row.get('confirmed', False),
+                'check_digit_failed': bool(
+                    row.get('check_digit_failed', False)
+                ),
+            }
             for row in filled
         ]
+        return self.rows
 
     def container_rows(self):
         return [
-            (row['number'], row['size']) for row in self.rows
+            (
+                row['number'],
+                row['size'],
+                bool(row.get('confirmed', False)),
+            )
+            for row in self.rows
         ]

@@ -54,7 +54,11 @@ from .models import (
     Stage,
     StageEvent,
 )
-from .validators import is_valid_container_number
+from .validators import (
+    expected_check_digit,
+    has_container_format,
+    is_valid_container_number,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -642,10 +646,26 @@ def shipment_new(request):
                     port=form.cleaned_data['port'],
                     destination_area=form.cleaned_data['destination_area'],
                 )
-                for number, size in form.container_rows():
-                    Container.objects.create(
-                        shipment=shipment, number=number, size=size
+                for number, size, confirmed in form.container_rows():
+                    bad_digit = not is_valid_container_number(number)
+                    container = Container.objects.create(
+                        shipment=shipment,
+                        number=number,
+                        size=size,
+                        check_digit_confirmed=bad_digit and confirmed,
                     )
+                    if bad_digit and confirmed:
+                        AuditLog.objects.create(
+                            shipment=shipment,
+                            container=container,
+                            user=request.user,
+                            action='container_created',
+                            new_value=(
+                                'Container %s saved with a check digit '
+                                'that does not match (confirmed by the '
+                                'agent).' % number
+                            ),
+                        )
                 _link_scan_document(request, company, shipment)
             return redirect('agent_shipment_detail', pk=shipment.pk)
         _restore_scan_context(request, company, form, context)
@@ -711,6 +731,10 @@ def _apply_scan_prefill(request, company, form, context):
         form.initial['importer_name'] = importer_name
     rows = []
     for item in result.get('containers') or []:
+        number = normalise_number(item.get('number'))
+        digit_failed = has_container_format(
+            number
+        ) and not is_valid_container_number(number)
         rows.append(
             {
                 'number': item.get('number') or '',
@@ -718,6 +742,18 @@ def _apply_scan_prefill(request, company, form, context):
                 'errors': [],
                 'check': (not item.get('valid'))
                 or not item.get('size'),
+                'check_digit_failed': digit_failed,
+                'check_digit_hint': (
+                    '%s does not pass the container check digit. '
+                    'If the first ten characters are right, the last '
+                    'digit would be %s. Please check it against the '
+                    'document.'
+                    % (
+                        number,
+                        expected_check_digit(number[:10]),
+                    )
+                ) if digit_failed else '',
+                'confirmed': False,
             }
         )
     if rows:
