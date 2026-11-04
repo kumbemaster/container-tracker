@@ -11,7 +11,7 @@
 <h1>Agent login</h1>
 </div>
 {% if form.non_field_errors %}
-<p class="banner error" role="status"><span class="banner-text">{{ form.non_field_errors }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
+<p class="banner error" role="status" data-transient><span class="banner-text">{{ form.non_field_errors }}</span> <button type="button" class="banner-x" data-dismiss aria-label="Dismiss">&times;</button></p>
 {% endif %}
 <form method="post" action="{% url 'agent_login' %}">
 {% csrf_token %}
@@ -30,4 +30,56 @@
 {% endif %}
 </div>
 </main>
+<script>
+// Transient banner: fade out after 6 seconds, removable at once.
+// Pauses while hovered or focused; never touches access-code messages.
+(function () {
+  var banner = document.querySelector('[data-transient]');
+  if (!banner) return;
+  if (/\d{6}/.test(banner.textContent)) return;
+  var dismissed = false;
+  var remaining = 6000;
+  var startedAt = 0;
+  var timer = null;
+  function remove() {
+    if (dismissed) return;
+    dismissed = true;
+    if (timer) clearTimeout(timer);
+    banner.remove();
+  }
+  function fire() {
+    if (dismissed) return;
+    if (
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      remove();
+      return;
+    }
+    banner.style.transition = 'opacity 300ms';
+    banner.style.opacity = '0';
+    timer = setTimeout(remove, 300);
+  }
+  function pause() {
+    if (dismissed || !timer) return;
+    clearTimeout(timer);
+    timer = null;
+    remaining -= Date.now() - startedAt;
+    if (remaining < 0) remaining = 0;
+  }
+  function resume() {
+    if (dismissed || timer) return;
+    startedAt = Date.now();
+    timer = setTimeout(fire, remaining);
+  }
+  banner.addEventListener('mouseenter', pause);
+  banner.addEventListener('mouseleave', resume);
+  banner.addEventListener('focusin', pause);
+  banner.addEventListener('focusout', resume);
+  var closer = banner.querySelector('[data-dismiss]');
+  if (closer) closer.addEventListener('click', remove);
+  startedAt = Date.now();
+  timer = setTimeout(fire, remaining);
+})();
+</script>
 {% endblock %}

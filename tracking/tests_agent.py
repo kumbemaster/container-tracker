@@ -213,6 +213,9 @@ class AgentTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Incorrect username or password.')
+        self.assertContains(response, 'data-transient')
+        self.assertContains(response, 'setTimeout(fire, remaining)')
+        self.assertContains(response, 'remaining = 6000')
 
     def test_lockout_after_five_failed_logins(self):
         company = self._company('Lockout Co')
